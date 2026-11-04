@@ -24,10 +24,6 @@ Linux and Windows.
 **You need:** Node.js ≥ 18, Hermes Agent with `pip install aiohttp`, and the Zalo
 app on your phone to scan a QR code.
 
-<p align="center">
-  <img src="https://raw.githubusercontent.com/cuongdev/hermes-zalo-plugin/main/assets/setup-flow.svg" alt="Setup in 4 steps: install, scan QR, register in Hermes, chat from Zalo" width="620">
-</p>
-
 **1. Get the code** and keep the folder where it is: the background service runs
 the bridge from it.
 

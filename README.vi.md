@@ -24,10 +24,6 @@ macOS, Linux và Windows.
 **Cần có:** Node.js ≥ 18, Hermes Agent đã chạy `pip install aiohttp`, và app Zalo
 trên điện thoại để quét mã QR.
 
-<p align="center">
-  <img src="https://raw.githubusercontent.com/cuongdev/hermes-zalo-plugin/main/assets/setup-flow.svg" alt="Cài đặt 4 bước: cài, quét QR, đăng ký vào Hermes, chat từ Zalo" width="620">
-</p>
-
 **1. Tải mã nguồn** và giữ nguyên thư mục ở chỗ đó: service chạy nền sẽ chạy
 bridge từ chính thư mục này.
 
