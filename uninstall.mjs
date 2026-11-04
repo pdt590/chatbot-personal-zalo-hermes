@@ -2,14 +2,16 @@
 // Cross-platform. Optionally wipe saved credentials.
 //
 //   node uninstall.mjs              # stop + remove the auto-start service
-//   node uninstall.mjs --purge      # also delete data/credentials.json (logout)
+//   node uninstall.mjs --purge      # also delete the saved credentials (logout)
 //   node uninstall.mjs --hermes-home <path>   # remove the adapter from that profile
+//
+// Wrappers: ./uninstall.sh (macOS/Linux), .\uninstall.ps1 (Windows).
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { credentialsPath, resolveHermesHome } from "./paths.js";
+import { credentialsPath, dataDir, resolveHermesHome } from "./paths.js";
 
 const argv = process.argv.slice(2);
 const PURGE = argv.includes("--purge");
@@ -45,9 +47,12 @@ function removeServiceLinux() {
 
 function removeServiceWindows() {
   const taskName = "HermesZaloPlugin";
+  // Stop a running bridge first: /Delete leaves the process alive.
+  spawnSync("schtasks", ["/End", "/TN", taskName], { stdio: "ignore", shell: true });
   const r = spawnSync("schtasks", ["/Delete", "/F", "/TN", taskName], { stdio: "inherit", shell: true });
   if (r.status === 0) log(`✓ Removed Scheduled Task '${taskName}'.`);
   else log(`• No Scheduled Task '${taskName}' (or removal failed).`);
+  fs.rmSync(path.join(dataDir(), "bridge-launcher.cmd"), { force: true });
 }
 
 function removeService() {

@@ -38,6 +38,53 @@ export function logDir() {
   return process.env.ZALO_LOG_DIR || dataDir();
 }
 
+// Bridge-side settings file. The bridge runs as a background service
+// (systemd/launchd/Scheduled Task) and never sees the Hermes profile's .env,
+// so `hermes gateway setup` mirrors the bridge-side keys (token, action policy,
+// cache tuning) here. Real environment variables always win over the file.
+export function bridgeEnvPath() {
+  return process.env.ZALO_BRIDGE_ENV || path.join(dataDir(), "bridge.env");
+}
+
+/** Parse KEY=VALUE lines (blank lines, `#` comments and `export ` allowed). */
+export function parseEnvFile(text) {
+  const out = {};
+  for (const raw of String(text || "").split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) continue;
+    const m = line.match(/^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
+    if (!m) continue;
+    let value = m[2].trim();
+    if (value.length >= 2 && (value[0] === '"' || value[0] === "'") && value.at(-1) === value[0]) {
+      value = value.slice(1, -1);
+    }
+    out[m[1]] = value;
+  }
+  return out;
+}
+
+/**
+ * Load bridge.env into process.env without overriding variables that are
+ * already set. Returns { file, applied: [keys] }. Missing file is not an error.
+ */
+export function loadBridgeEnv() {
+  const file = bridgeEnvPath();
+  const applied = [];
+  try {
+    if (!fs.existsSync(file)) return { file, applied };
+    const vars = parseEnvFile(fs.readFileSync(file, "utf-8"));
+    for (const [k, v] of Object.entries(vars)) {
+      if (process.env[k] === undefined) {
+        process.env[k] = v;
+        applied.push(k);
+      }
+    }
+  } catch (e) {
+    console.error(`[bridge] could not read ${file}: ${e.message}`);
+  }
+  return { file, applied };
+}
+
 function flagValue(argv, name) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];

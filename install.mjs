@@ -16,7 +16,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { logDir, resolveHermesHome } from "./paths.js";
+import { dataDir, logDir, resolveHermesHome } from "./paths.js";
+import { restartService, serviceInstalled, stopService } from "./service.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
@@ -26,9 +27,44 @@ const RELOGIN = has("--relogin") || has("--force");
 const SERVICE_ONLY = has("--service-only");
 
 const PLATFORM = process.platform; // 'darwin' | 'linux' | 'win32'
-const NODE_BIN = process.execPath;
+
+// The service must outlive Node upgrades. process.execPath often points into a
+// versioned directory that the package manager deletes on the next update
+// (snap: /snap/node/<rev>/…, Homebrew: …/Cellar/node/<ver>/…), after which
+// the service fails to start (systemd status=203/EXEC). Use the stable alias.
+function stableNodeBin(exe = process.execPath) {
+  const snap = exe.match(/^\/snap\/([^/]+)\/x?\d+\/(.+)$/);
+  if (snap) {
+    const current = `/snap/${snap[1]}/current/${snap[2]}`;
+    if (fs.existsSync(current)) return current;
+  }
+  const brew = exe.match(/^(.*)\/Cellar\/node(?:@[^/]+)?\/[^/]+\/bin\/node$/);
+  if (brew) {
+    const linked = `${brew[1]}/bin/node`;
+    if (fs.existsSync(linked)) return linked;
+  }
+  return exe;
+}
+const NODE_BIN = stableNodeBin();
 const SERVER_JS = path.join(__dirname, "server.js");
 const LABEL = "com.hermes.zaloplugin";
+
+// Data-location overrides the user ran setup with. The service manager starts
+// the bridge with a clean environment, so without these it would look for
+// credentials/bridge.env in the default ~/.hermes-zalo and miss the login.
+const PATH_ENV_KEYS = [
+  "ZALO_DATA_DIR", "ZALO_BRIDGE_ENV", "ZALO_CREDENTIALS_PATH",
+  "ZALO_QR_PATH", "ZALO_CLIMSG_DIR", "ZALO_LOG_DIR",
+];
+function serviceEnv() {
+  const out = {};
+  for (const k of PATH_ENV_KEYS) {
+    const v = (process.env[k] || "").trim();
+    if (v) out[k] = path.resolve(v);
+  }
+  return out;
+}
+const xmlEscape = (v) => v.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 function log(msg) { console.log(msg); }
 function step(n, msg) { console.log(`\n[${n}] ${msg}`); }
@@ -85,11 +121,20 @@ function installDeps() {
 }
 
 // ── 2. Log in (QR) unless we already have working credentials ────────────────
-function login() {
+function login({ restartOnFailure = false } = {}) {
   step(2, "Zalo login…");
   const args = [path.join(__dirname, "login.mjs")];
   if (RELOGIN) args.push("--force");
-  run(NODE_BIN, args);
+  const r = spawnSync(NODE_BIN, args, {
+    stdio: "inherit",
+    cwd: __dirname,
+    env: { ...process.env, HZP_FROM_SETUP: !NO_SERVICE || restartOnFailure ? "1" : "" },
+  });
+  if (r.status !== 0) {
+    // Don't leave the user with no bridge at all: bring the old one back.
+    if (restartOnFailure) restartService();
+    die("Zalo login failed (see above). Re-run: hermes-zalo-plugin setup --relogin");
+  }
 }
 
 // ── 3. Background service (per-OS) ───────────────────────────────────────────
@@ -98,6 +143,15 @@ function installServiceDarwin() {
   fs.mkdirSync(plistDir, { recursive: true });
   const plistPath = path.join(plistDir, `${LABEL}.plist`);
   const logs = logDir();
+  fs.mkdirSync(logs, { recursive: true });
+  const env = Object.entries(serviceEnv());
+  const envXml = env.length
+    ? `  <key>EnvironmentVariables</key>
+  <dict>
+${env.map(([k, v]) => `    <key>${k}</key><string>${xmlEscape(v)}</string>`).join("\n")}
+  </dict>
+`
+    : "";
   const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -111,7 +165,7 @@ function installServiceDarwin() {
   <key>WorkingDirectory</key><string>${__dirname}</string>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
-  <key>StandardOutPath</key><string>${path.join(logs, "bridge.out.log")}</string>
+${envXml}  <key>StandardOutPath</key><string>${path.join(logs, "bridge.out.log")}</string>
   <key>StandardErrorPath</key><string>${path.join(logs, "bridge.err.log")}</string>
 </dict>
 </plist>
@@ -119,6 +173,7 @@ function installServiceDarwin() {
   fs.writeFileSync(plistPath, plist);
   // reload (ignore failures if not yet loaded)
   spawnSync("launchctl", ["unload", plistPath], { stdio: "ignore" });
+  // `load` starts it (RunAtLoad); after a package update this also picks up new code.
   run("launchctl", ["load", plistPath]);
   log(`✓ launchd service installed: ${plistPath}`);
   log("  Manage: launchctl unload/load the plist above.");
@@ -135,7 +190,7 @@ After=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=${__dirname}
-ExecStart=${NODE_BIN} ${SERVER_JS}
+${Object.entries(serviceEnv()).map(([k, v]) => `Environment="${k}=${v}"\n`).join("")}ExecStart=${NODE_BIN} ${SERVER_JS}
 Restart=always
 RestartSec=5
 
@@ -149,18 +204,39 @@ WantedBy=default.target
     return;
   }
   sysctl(["daemon-reload"]);
-  sysctl(["enable", "--now", `${LABEL}.service`]);
+  // enable + restart (not `enable --now`): on a re-run after a package update
+  // an already-running bridge must be restarted to load the new code.
+  const ok = sysctl(["enable", `${LABEL}.service`]).status === 0
+    && sysctl(["restart", `${LABEL}.service`]).status === 0;
+  if (!ok) {
+    log(`⚠ Unit written to ${unitPath}, but systemd --user could not start it.`);
+    log("  (Common over SSH without a user session: run `loginctl enable-linger $USER` and re-login.)");
+    log("  Start the bridge manually meanwhile: hermes-zalo-plugin start");
+    return;
+  }
   log(`✓ systemd user service installed & started: ${unitPath}`);
   log(`  Manage: systemctl --user status/restart/stop ${LABEL}`);
   log("  Tip: run `loginctl enable-linger $USER` so it runs without an active login session.");
 }
 
 function installServiceWindows() {
-  // Scheduled Task that runs at logon and restarts on failure. Avoids needing
+  // Scheduled Task that runs at logon (no auto-restart on crash). Avoids needing
   // nssm/admin service install. Uses schtasks (present on all Windows).
   const taskName = "HermesZaloPlugin";
-  // Wrap in a tiny launcher so cwd is correct.
-  const cmd = `"${NODE_BIN}" "${SERVER_JS}"`;
+  // A tiny launcher sets cwd + data-location env and captures logs (schtasks
+  // /TR has none of that and a ~260 char limit).
+  const logs = logDir();
+  fs.mkdirSync(logs, { recursive: true });
+  const launcher = path.join(dataDir(), "bridge-launcher.cmd");
+  const envLines = Object.entries(serviceEnv()).map(([k, v]) => `set "${k}=${v}"`);
+  fs.writeFileSync(launcher, [
+    "@echo off",
+    `cd /d "${__dirname}"`,
+    ...envLines,
+    `"${NODE_BIN}" "${SERVER_JS}" >> "${path.join(logs, "bridge.out.log")}" 2>> "${path.join(logs, "bridge.err.log")}"`,
+    "",
+  ].join("\r\n"));
+  const cmd = `"${launcher}"`;
   const args = [
     "/Create", "/F",
     "/SC", "ONLOGON",
@@ -176,7 +252,13 @@ function installServiceWindows() {
     return;
   }
   log(`✓ Scheduled Task '${taskName}' registered (runs at logon).`);
-  log(`  Start now:  schtasks /Run /TN ${taskName}`);
+  // Start it now too, otherwise the bridge is down until the next logon.
+  spawnSync("schtasks", ["/End", "/TN", taskName], { stdio: "ignore", shell: true });
+  if (spawnSync("schtasks", ["/Run", "/TN", taskName], { stdio: "ignore", shell: true }).status === 0) {
+    log("✓ Bridge started.");
+  } else {
+    log(`⚠ Could not start it now. Run:  schtasks /Run /TN ${taskName}`);
+  }
   log(`  Manage:     Task Scheduler → ${taskName}`);
 }
 
@@ -224,9 +306,14 @@ function installHermesPlugin() {
   }
   const dest = path.join(hermesHome, "plugins", "zalo");
   fs.mkdirSync(dest, { recursive: true });
-  for (const f of fs.readdirSync(src)) {
-    fs.copyFileSync(path.join(src, f), path.join(dest, f));
+  // Files only: a checkout has hermes-plugin/__pycache__/, and copyFileSync on
+  // a directory throws EISDIR. Python rebuilds bytecode itself.
+  for (const ent of fs.readdirSync(src, { withFileTypes: true })) {
+    if (!ent.isFile() || ent.name.endsWith(".pyc")) continue;
+    fs.copyFileSync(path.join(src, ent.name), path.join(dest, ent.name));
   }
+  // Drop bytecode left by an older adapter version.
+  fs.rmSync(path.join(dest, "__pycache__"), { recursive: true, force: true });
   log(`✓ Plugin copied to ${dest}`);
 
   // Enable the plugin in config.yaml (plugins.enabled must contain "zalo").
@@ -351,8 +438,20 @@ async function main() {
   }
 
   installDeps();
-  login();
+  // --relogin while the service is running: login.mjs refuses (a second Zalo
+  // connection would kick the live one), so stop the service first. The
+  // service step below starts it again with the new session.
+  let stoppedForLogin = false;
+  if (RELOGIN && serviceInstalled()) {
+    log("\nStopping the running bridge service so the QR login does not collide with it…");
+    stoppedForLogin = stopService().ok;
+  }
+  login({ restartOnFailure: stoppedForLogin });
   if (!NO_SERVICE) installService();
+  else if (stoppedForLogin) {
+    const r = restartService();
+    log(r.ok ? "✓ Bridge service started again with the new session." : `⚠ Could not restart the service: ${r.message}`);
+  }
   else log("\n(Skipping background service — run `npm start` to launch the bridge.)");
   installHermesPlugin();
   nextSteps();

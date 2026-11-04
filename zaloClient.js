@@ -104,6 +104,7 @@ export class ZaloClient extends EventEmitter {
     this.selfListen = selfListen;
     this.api = null;
     this.ownId = null;
+    this.ownName = null;
     this.loggedIn = false;
     this.sessionDead = false;
     this.sessionDeadReason = null;
@@ -114,6 +115,12 @@ export class ZaloClient extends EventEmitter {
     this._autoReloginTimer = null;
     this._autoReloginAttempts = 0;
     this._reconnecting = false;
+    // Each started listener gets a generation number. Handlers ignore events
+    // from older generations: zca-js's listener.stop() still fires "closed"
+    // (and may even auto-restart the socket), which must not touch the new
+    // session. _loginPromise serialises login/relogin/auto-relogin.
+    this._listenerGen = 0;
+    this._loginPromise = null;
     // Cache msgId -> { cliMsgId, ts } so undo() works without the caller
     // knowing the client id (zca-js generates clientId internally and doesn't
     // return it; the listener echo carries the real cliMsgId).
@@ -130,6 +137,7 @@ export class ZaloClient extends EventEmitter {
       cliMsgDir || path.join(path.dirname(this.credentialsPath), "climsgids");
     this._cliMsgStream = null;
     this._cliMsgStreamDay = null;
+    this._cliMsgLoaded = false;
 
     // ── Info cache + rate limiter (anti rate-limit / account-lock) ──────────
     // zca-js is an unofficial API; hammering getUserInfo/getGroupInfo/getAll*
@@ -139,6 +147,7 @@ export class ZaloClient extends EventEmitter {
     //   3) on a suspected rate-limit error, apply exponential backoff and serve
     //      stale cache (if any) instead of hammering further.
     this._infoCache = new Map(); // key -> { value, ts }
+    this._infoCacheMax = 2000; // oldest entries are evicted past this
     this._infoCacheTtlMs = Number.isFinite(infoCacheTtlMs) ? infoCacheTtlMs : 600000;
     this._infoMinIntervalMs = Number.isFinite(infoMinIntervalMs) ? infoMinIntervalMs : 1500;
     this._infoLastCallAt = 0;
@@ -192,7 +201,11 @@ export class ZaloClient extends EventEmitter {
       try {
         const value = await fetcher();
         this._infoLastCallAt = Date.now();
+        this._infoCache.delete(key); // re-insert so Map order = recency
         this._infoCache.set(key, { value, ts: Date.now() });
+        while (this._infoCache.size > this._infoCacheMax) {
+          this._infoCache.delete(this._infoCache.keys().next().value);
+        }
         // success resets backoff
         this._infoBackoffMs = 0;
         this._infoBackoffUntil = 0;
@@ -291,6 +304,8 @@ export class ZaloClient extends EventEmitter {
 
   /** Load the last `retentionDays` of JSONL files into memory on startup. */
   _loadCliMsgCache() {
+    if (this._cliMsgLoaded) return; // once per process; later relogins reuse memory
+    this._cliMsgLoaded = true;
     try {
       if (!this._cliMsgPersist) return; // persistence disabled
       if (!fs.existsSync(this._cliMsgDir)) return;
@@ -318,7 +333,9 @@ export class ZaloClient extends EventEmitter {
           }
         }
       }
-      if (loaded) console.log(`[zalo] loaded ${loaded} cached cliMsgId mappings (<=30d)`);
+      if (loaded) {
+        console.log(`[zalo] loaded ${loaded} cached cliMsgId mappings (<=${this._cliMsgRetentionDays}d)`);
+      }
     } catch (e) {
       console.error("[zalo] cliMsgId cache load failed:", e.message);
     }
@@ -379,7 +396,18 @@ export class ZaloClient extends EventEmitter {
    * QR flow: writes the QR PNG, exposes base64 via qrState, resolves once the
    * phone confirms. Throws on hard failure.
    */
-  async login({ forceQR = false, cookieOnly = false } = {}) {
+  async login(opts = {}) {
+    // Only one login at a time: a second caller (e.g. POST /relogin during an
+    // auto-relogin) waits for the one already running instead of opening a
+    // second Zalo connection.
+    if (this._loginPromise) return this._loginPromise;
+    this._loginPromise = this._login(opts).finally(() => {
+      this._loginPromise = null;
+    });
+    return this._loginPromise;
+  }
+
+  async _login({ forceQR = false, cookieOnly = false } = {}) {
     const zalo = new Zalo({
       // Always self-listen at the zca-js layer so we can capture the real
       // cliMsgId of our own sent messages (needed for undo). We still filter
@@ -457,75 +485,82 @@ export class ZaloClient extends EventEmitter {
       else finishWith(null);
     };
 
-    this.api = await zalo.loginQR(
-      { userAgent: DEFAULT_UA, qrPath: this.qrPath },
-      (event) => {
-        switch (event.type) {
-          case LoginQRCallbackEventType.QRCodeGenerated: {
-            // Zalo's generate endpoint returns a bare `zaloqr:v2_...` token and a
-            // server-rendered PNG that encodes only that token. The mobile app
-            // expects the full `http://zaloapp.com/qr/l?tk=<token>` URL, so we
-            // wrap the token and regenerate the QR ourselves (terminal + PNG +
-            // the base64 served over /qr) rather than reuse Zalo's image.
-            const loginUrl = this._qrLoginUrl(event.data.token);
-            this._qrState = { status: "waiting_scan", image: null };
-            // Render our own PNG async; fall back to Zalo's image if the
-            // optional `qrcode` dep is missing. zca-js does NOT auto-save the PNG
-            // when a callback is supplied, so persist it ourselves too.
-            (async () => {
-              const png =
-                (await this._qrPngBase64(loginUrl)) ||
-                String(event.data.image || "").replace(/^data:image\/png;base64,/, "");
-              if (this._qrState && this._qrState.status === "waiting_scan") {
-                this._qrState.image = png;
-              }
-              try {
-                fs.writeFileSync(this.qrPath, png, "base64");
-              } catch {
+    try {
+      this.api = await zalo.loginQR(
+        { userAgent: DEFAULT_UA, qrPath: this.qrPath },
+        (event) => {
+          switch (event.type) {
+            case LoginQRCallbackEventType.QRCodeGenerated: {
+              // Zalo's generate endpoint returns a bare `zaloqr:v2_...` token and a
+              // server-rendered PNG that encodes only that token. The mobile app
+              // expects the full `http://zaloapp.com/qr/l?tk=<token>` URL, so we
+              // wrap the token and regenerate the QR ourselves (terminal + PNG +
+              // the base64 served over /qr) rather than reuse Zalo's image.
+              const loginUrl = this._qrLoginUrl(event.data.token);
+              this._qrState = { status: "waiting_scan", image: null };
+              // Render our own PNG async; fall back to Zalo's image if the
+              // optional `qrcode` dep is missing. zca-js does NOT auto-save the PNG
+              // when a callback is supplied, so persist it ourselves too.
+              (async () => {
+                const png =
+                  (await this._qrPngBase64(loginUrl)) ||
+                  String(event.data.image || "").replace(/^data:image\/png;base64,/, "");
+                if (this._qrState && this._qrState.status === "waiting_scan") {
+                  this._qrState.image = png;
+                }
+                try {
+                  fs.writeFileSync(this.qrPath, png, "base64");
+                } catch {
+                  /* ignore */
+                }
+              })();
+              showQr(loginUrl);
+              break;
+            }
+            case LoginQRCallbackEventType.QRCodeScanned:
+              this._qrState = {
+                status: "scanned",
+                image: null,
+                displayName: event.data.display_name,
+              };
+              stopCountdown(`  ✓ Scanned by ${event.data.display_name} — confirm on your phone…`);
+              if (!tty) console.log("[zalo] QR scanned by", event.data.display_name, "- confirm on phone.");
+              break;
+            case LoginQRCallbackEventType.QRCodeExpired:
+              this._qrState = { status: "expired", image: null };
+              stopCountdown("  ⏳ QR expired — generating a new one…");
+              if (!tty) console.log("[zalo] QR expired; regenerating.");
+              try { event.actions?.retry?.(); } catch {
                 /* ignore */
               }
-            })();
-            showQr(loginUrl);
-            break;
+              break;
+            case LoginQRCallbackEventType.QRCodeDeclined:
+              this._qrState = { status: "declined", image: null };
+              stopCountdown("  ✗ Declined on your phone — generating a new one…");
+              if (!tty) console.log("[zalo] QR login declined; regenerating.");
+              try { event.actions?.retry?.(); } catch {
+                /* ignore */
+              }
+              break;
+            case LoginQRCallbackEventType.GotLoginInfo:
+              // Persist cookie/imei/userAgent so we don't need QR next time.
+              stopCountdown();
+              this._saveCredentials({
+                cookie: event.data.cookie,
+                imei: event.data.imei,
+                userAgent: event.data.userAgent,
+              });
+              this._qrState = { status: "logged_in", image: null };
+              break;
           }
-          case LoginQRCallbackEventType.QRCodeScanned:
-            this._qrState = {
-              status: "scanned",
-              image: null,
-              displayName: event.data.display_name,
-            };
-            stopCountdown(`  ✓ Scanned by ${event.data.display_name} — confirm on your phone…`);
-            if (!tty) console.log("[zalo] QR scanned by", event.data.display_name, "- confirm on phone.");
-            break;
-          case LoginQRCallbackEventType.QRCodeExpired:
-            this._qrState = { status: "expired", image: null };
-            stopCountdown("  ⏳ QR expired — generating a new one…");
-            if (!tty) console.log("[zalo] QR expired; regenerating.");
-            try { event.actions?.retry?.(); } catch {
-              /* ignore */
-            }
-            break;
-          case LoginQRCallbackEventType.QRCodeDeclined:
-            this._qrState = { status: "declined", image: null };
-            stopCountdown("  ✗ Declined on your phone — generating a new one…");
-            if (!tty) console.log("[zalo] QR login declined; regenerating.");
-            try { event.actions?.retry?.(); } catch {
-              /* ignore */
-            }
-            break;
-          case LoginQRCallbackEventType.GotLoginInfo:
-            // Persist cookie/imei/userAgent so we don't need QR next time.
-            stopCountdown();
-            this._saveCredentials({
-              cookie: event.data.cookie,
-              imei: event.data.imei,
-              userAgent: event.data.userAgent,
-            });
-            this._qrState = { status: "logged_in", image: null };
-            break;
-        }
-      },
-    );
+        },
+      );
+    } catch (e) {
+      this._qrState = { status: "failed", image: null, error: String(e && e.message ? e.message : e) };
+      throw e;
+    } finally {
+      stopCountdown();
+    }
 
     await this._afterLogin();
     return { method: "qr" };
@@ -533,13 +568,24 @@ export class ZaloClient extends EventEmitter {
 
   async _afterLogin() {
     this.loggedIn = true;
-    this._loadCliMsgCache(); // reload persisted msgId→cliMsgId (<=30d) for undo
+    this.sessionDead = false;
+    this.sessionDeadReason = null;
+    this._loadCliMsgCache(); // load persisted msgId→cliMsgId once, for undo
     try {
       this.ownId = await this.api.getOwnId();
     } catch {
       this.ownId = null;
     }
-    console.log("[zalo] logged in. ownId =", this.ownId);
+    // Display name lets the adapter recognise "<name> ..." as addressing the bot
+    // in groups. One call per login; failure is harmless.
+    try {
+      const info = await this.api.fetchAccountInfo();
+      const p = (info && (info.profile || info)) || {};
+      this.ownName = p.displayName || p.zaloName || null;
+    } catch {
+      this.ownName = null;
+    }
+    console.log("[zalo] logged in. ownId =", this.ownId, "ownName =", this.ownName);
     this._wireListeners();
     // retryOnClose: zca-js auto-reconnects the Zalo websocket on drop.
     this.api.listener.start({ retryOnClose: true });
@@ -650,8 +696,16 @@ export class ZaloClient extends EventEmitter {
 
   _wireListeners() {
     const listener = this.api.listener;
+    const gen = ++this._listenerGen;
+    const stale = () => gen !== this._listenerGen;
 
     listener.on("connected", () => {
+      if (stale()) {
+        // zca-js restarted a socket we already stopped; close it again so it
+        // can't hold a second connection (Zalo kicks one with code 3000).
+        try { listener.stop(); } catch { /* ignore */ }
+        return;
+      }
       console.log("[zalo] listener connected");
       this.sessionDead = false;
       // A healthy connection replenishes the auto-relogin budget so periodic
@@ -661,11 +715,13 @@ export class ZaloClient extends EventEmitter {
       this.emit("status", { connected: true });
     });
     listener.on("disconnected", (code, reason) => {
+      if (stale()) return;
       // Transient drop; zca-js will auto-retry (retryOnClose). Just surface it.
       console.log("[zalo] listener disconnected", code, reason);
       this.emit("status", { connected: false, transient: true, code, reason });
     });
     listener.on("closed", (code, reason) => {
+      if (stale()) return; // our own stop() of a replaced listener
       // Permanent close: zca-js's retry budget is exhausted OR a fatal code.
       // 3000 = DuplicateConnection (logged in elsewhere), 3003 = KickConnection
       // are terminal — re-scanning QR is the only recovery, so don't auto-retry.
@@ -681,10 +737,12 @@ export class ZaloClient extends EventEmitter {
       }
     });
     listener.on("error", (err) => {
+      if (stale()) return;
       console.error("[zalo] listener error:", err);
     });
 
     listener.on("message", (message) => {
+      if (stale()) return;
       try {
         const isGroup = message.type === ThreadType.Group;
         const d = message.data || {};
@@ -706,6 +764,7 @@ export class ZaloClient extends EventEmitter {
 
     // Reactions (thả tim/like…) on messages.
     listener.on("reaction", (reaction) => {
+      if (stale()) return;
       try {
         const d = reaction.data || {};
         this.emit("reaction", {
@@ -724,6 +783,7 @@ export class ZaloClient extends EventEmitter {
 
     // Message undo/recall (thu hồi).
     listener.on("undo", (undo) => {
+      if (stale()) return;
       try {
         const d = undo.data || {};
         this.emit("undo", {
@@ -740,6 +800,7 @@ export class ZaloClient extends EventEmitter {
 
     // Friend events (requests, accepts, etc.).
     listener.on("friend_event", (ev) => {
+      if (stale()) return;
       try {
         this.emit("friend_event", { type: ev.type, data: ev.data, isSelf: !!ev.isSelf });
       } catch (e) {
@@ -749,6 +810,7 @@ export class ZaloClient extends EventEmitter {
 
     // Group events (join/leave/rename/admin, etc.).
     listener.on("group_event", (ev) => {
+      if (stale()) return;
       try {
         this.emit("group_event", { type: ev.type, data: ev.data, isSelf: !!ev.isSelf });
       } catch (e) {
@@ -870,7 +932,7 @@ export class ZaloClient extends EventEmitter {
       quotedOwnerId: data.quote && data.quote.ownerId ? String(data.quote.ownerId) : "",
       // Enough to build a SendMessageQuote for replies.
       quote: {
-        content: typeof data.content === "string" ? data.content : data.content,
+        content: data.content,
         msgType: data.msgType,
         propertyExt: data.propertyExt,
         uidFrom: data.uidFrom,
@@ -1148,8 +1210,10 @@ export class ZaloClient extends EventEmitter {
    * Forces QR when the saved cookie is the thing that died.
    */
   async relogin({ forceQR = true, cookieOnly = false } = {}) {
+    if (this._loginPromise) return this._loginPromise; // already logging in
     this._stopReconnect();
     this._stopKeepAlive();
+    this._listenerGen++; // retire the old listener's handlers before stop()
     try {
       if (this.api && this.api.listener) this.api.listener.stop();
     } catch {
@@ -1164,6 +1228,7 @@ export class ZaloClient extends EventEmitter {
   async shutdown() {
     this._stopReconnect();
     this._stopKeepAlive();
+    this._listenerGen++;
     try {
       if (this.api && this.api.listener) this.api.listener.stop();
     } catch {

@@ -24,19 +24,26 @@ Configuration in config.yaml::
 Or via environment variables (override config.yaml):
     ZALO_PLUGIN_URL, ZALO_PLUGIN_TOKEN, ZALO_ALLOWED_USERS,
     ZALO_ALLOW_ALL_USERS, ZALO_HOME_CHANNEL, ZALO_GROUP_REQUIRE_MENTION
+
+Bridge-side settings (token, action policy, cache tuning) are mirrored by
+`hermes gateway setup` into the bridge's own settings file
+(~/.hermes-zalo/bridge.env), because the bridge runs as a separate service
+and never reads this profile's .env.
 """
 
 import asyncio
 import json
 import logging
 import os
+import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
 # ── zca-js action → permission-group map (KEEP IN SYNC WITH permissions.js) ──
-# Mirrors ACTION_GROUP in the bridge's permissions.js (145 APIs). Bundled
+# Mirrors ACTION_GROUP in the bridge's permissions.js (145 APIs; checked by
+# test/permissions.test.mjs). Bundled
 # statically so `hermes gateway setup` can offer a custom action picker even
 # when the bridge is offline. If permissions.js changes, regenerate this.
 _ACTION_GROUP = {
@@ -187,6 +194,23 @@ _ACTION_GROUP = {
     "votePoll": "interact",
 }
 
+# Expose the session cookie/imei/secretKey; never offered in the setup picker
+# (mirrors SENSITIVE_ACTIONS in permissions.js).
+_SENSITIVE_ACTIONS = {"getCookie", "getContext"}
+
+# Settings that the bridge process reads. The setup wizard saves them to the
+# Hermes .env AND mirrors them into the bridge's bridge.env.
+_BRIDGE_ENV_KEYS = (
+    "ZALO_PLUGIN_TOKEN",
+    "ZALO_ALLOWED_ACTION_GROUPS",
+    "ZALO_ALLOW_DESTRUCTIVE",
+    "ZALO_ALLOWED_ACTIONS",
+    "ZALO_DENIED_ACTIONS",
+    "ZALO_CLIMSG_RETENTION_DAYS",
+    "ZALO_INFO_CACHE_TTL",
+    "ZALO_INFO_MIN_INTERVAL_MS",
+)
+
 from gateway.platforms.base import (
     BasePlatformAdapter,
     SendResult,
@@ -264,13 +288,9 @@ class ZaloAdapter(BasePlatformAdapter):
             mode = "mention"
         self.group_mode = mode
 
-        # Deprecated flag: warn but honor (allow_all_users=true had no real effect
-        # beyond the old confusing gate; empty allowlist already means "all").
-        if os.getenv("ZALO_ALLOW_ALL_USERS") is not None or extra.get("allow_all_users") is not None:
-            logger.warning(
-                "Zalo: ZALO_ALLOW_ALL_USERS is deprecated and ignored. "
-                "Leave ZALO_ALLOWED_USERS empty to allow everyone, or list specific uids."
-            )
+        # Note: ZALO_ALLOW_ALL_USERS is read by the Hermes gateway itself
+        # (allow_all_env in register()), not here. Without it — or an allowlist
+        # or pairing — Hermes refuses unknown senders before they reach us.
 
         # Log inbound uid/threadId to help operators discover ids for allowlists.
         self.log_ids = _truthy(os.getenv("ZALO_LOG_IDS")) if os.getenv("ZALO_LOG_IDS") else bool(extra.get("log_ids", False))
@@ -283,6 +303,11 @@ class ZaloAdapter(BasePlatformAdapter):
         # Remember the thread type per chat_id from inbound messages so replies
         # route correctly (user vs group). Zalo thread IDs don't encode type.
         self._thread_types: Dict[str, str] = {}
+        # Seed from the home channel so cron delivery to "group:<id>" routes
+        # correctly even before any inbound message from that group.
+        home_id, home_type = _parse_home_channel(os.getenv("ZALO_HOME_CHANNEL") or "")
+        if home_id:
+            self._thread_types[home_id] = home_type
         self._policy: Optional[Dict[str, Any]] = None
 
         self._session = None  # aiohttp.ClientSession
@@ -322,12 +347,13 @@ class ZaloAdapter(BasePlatformAdapter):
         import aiohttp
 
         self._stop = False
+        await self._close_session()  # never leak a session from a previous connect()
         self._session = aiohttp.ClientSession()
 
         # Probe bridge health and login state.
         try:
             async with self._session.get(
-                f"{self.bridge_url}/health", timeout=aiohttp.ClientTimeout(total=10)
+                f"{self.bridge_url}/health", headers=self._headers(), timeout=aiohttp.ClientTimeout(total=10)
             ) as resp:
                 data = await resp.json()
         except Exception as e:
@@ -348,13 +374,16 @@ class ZaloAdapter(BasePlatformAdapter):
             return False
 
         self._own_id = str(data.get("ownId") or "") or None
+        self._own_name = str(data.get("ownName") or "").strip() or None
 
         # Fetch + log the active action policy (transparency; helps the agent
         # understand what it can/can't do without hitting 403 blindly).
         try:
             async with self._session.get(
-                f"{self.bridge_url}/policy", timeout=aiohttp.ClientTimeout(total=10)
+                f"{self.bridge_url}/policy", headers=self._headers(), timeout=aiohttp.ClientTimeout(total=10)
             ) as presp:
+                if presp.status != 200:
+                    raise RuntimeError(f"HTTP {presp.status}")
                 policy = await presp.json()
             self._policy = policy
             logger.info(
@@ -371,7 +400,9 @@ class ZaloAdapter(BasePlatformAdapter):
         # Start the SSE inbound loop.
         self._sse_task = asyncio.create_task(self._sse_loop())
         self._mark_connected()
-        logger.info("Zalo: connected to bridge %s (ownId=%s)", self.bridge_url, self._own_id)
+        logger.info(
+            "Zalo: connected to bridge %s (ownId=%s, ownName=%s)", self.bridge_url, self._own_id, self._own_name
+        )
         return True
 
     async def disconnect(self) -> None:
@@ -416,14 +447,18 @@ class ZaloAdapter(BasePlatformAdapter):
                         raise RuntimeError(f"SSE status {resp.status}")
                     backoff = 1.0  # reset after a successful connect
                     await self._consume_sse(resp)
+                reason = "stream ended"  # bridge closed it (e.g. restart)
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                if self._stop:
-                    break
-                logger.warning("Zalo: SSE disconnected (%s); reconnecting in %.1fs", e, backoff)
-                await asyncio.sleep(backoff)
-                backoff = min(backoff * 2, 30.0)
+                reason = str(e) or type(e).__name__
+            if self._stop:
+                break
+            # Always pause before reconnecting, also after a clean end, so a
+            # bridge that accepts and immediately closes can't cause a hot loop.
+            logger.warning("Zalo: SSE disconnected (%s); reconnecting in %.1fs", reason, backoff)
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, 30.0)
 
     async def _consume_sse(self, resp) -> None:
         event_type = "message"
@@ -439,7 +474,14 @@ class ZaloAdapter(BasePlatformAdapter):
                 # Dispatch the accumulated event.
                 if data_lines:
                     payload = "\n".join(data_lines)
-                    await self._handle_sse_event(event_type, payload)
+                    try:
+                        await self._handle_sse_event(event_type, payload)
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:
+                        # Skip the event rather than drop the stream: otherwise the
+                        # reconnect replays it (Last-Event-ID) and fails forever.
+                        logger.exception("Zalo: failed to handle %s event; skipping it", event_type)
                     if event_id is not None:
                         self._last_event_id = event_id
                 event_type = "message"
@@ -672,14 +714,13 @@ class ZaloAdapter(BasePlatformAdapter):
         candidates = []
         if self._own_name:
             candidates.append(self._own_name)
-        candidates += ["hermes", "@hermes", "bot"]
-        low = t.lower()
+        candidates += ["hermes", "bot"]
         for c in candidates:
-            cl = c.lower()
-            if low.startswith(cl):
-                return t[len(c):].lstrip(" :,@").strip() or t
-            if low.startswith("@" + cl):
-                return t[len(c) + 1:].lstrip(" :,@").strip() or t
+            # Whole-word match only: "bot ..." / "@bot, ..." address the bot,
+            # "both" / "bottom" do not.
+            m = re.match(r"@?" + re.escape(c) + r"(?![\w])[\s:,@]*", t, re.IGNORECASE)
+            if m:
+                return t[m.end():].strip() or t
         return None
 
     # ── Outbound ──────────────────────────────────────────────────────────
@@ -755,7 +796,36 @@ class ZaloAdapter(BasePlatformAdapter):
         await self._post("/typing", {"threadId": chat_id, "threadType": thread_type})
 
     async def send_image(self, chat_id, image_url, caption=None, reply_to=None, metadata=None):
+        # The bridge only sends local files; fetch remote images into the cache first.
+        if str(image_url).startswith(("http://", "https://")):
+            local = await self._download_to_cache(str(image_url))
+            if not local:
+                return SendResult(success=False, error=f"could not download image: {image_url}")
+            image_url = local
         return await self.send_image_file(chat_id, image_url, caption, reply_to, metadata)
+
+    async def _download_to_cache(self, url: str) -> Optional[str]:
+        """Download an image URL into the Hermes image cache; returns the path."""
+        import aiohttp
+
+        if not self._session or self._session.closed:
+            return None
+        try:
+            async with self._session.get(url, timeout=aiohttp.ClientTimeout(total=60)) as resp:
+                if resp.status != 200:
+                    logger.warning("Zalo: image download failed (%s): %s", resp.status, url)
+                    return None
+                data = await resp.read()
+                ctype = (resp.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        except Exception as e:
+            logger.warning("Zalo: image download error for %s: %s", url, e)
+            return None
+        ext = {"image/png": ".png", "image/gif": ".gif", "image/webp": ".webp"}.get(ctype, ".jpg")
+        try:
+            return cache_image_from_bytes(data, ext=ext)
+        except Exception as e:
+            logger.warning("Zalo: failed to cache downloaded image: %s", e)
+            return None
 
     async def send_image_file(self, chat_id, image_path, caption=None, reply_to=None, metadata=None, **kwargs):
         thread_type = self._thread_type_from_chat_id(chat_id, metadata)
@@ -802,7 +872,8 @@ class ZaloAdapter(BasePlatformAdapter):
         return SendResult(success=True)
 
     async def get_chat_info(self, chat_id: str) -> Dict[str, Any]:
-        return {"name": str(chat_id), "type": "dm", "chat_id": str(chat_id)}
+        kind = "group" if self._thread_types.get(str(chat_id)) == "group" else "dm"
+        return {"name": str(chat_id), "type": kind, "chat_id": str(chat_id)}
 
     # ── Extended Zalo actions (for agent tools / direct use) ────────────────
 
@@ -1018,6 +1089,49 @@ def _fetch_contacts(bridge_url: str, token: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+def _bridge_env_path() -> str:
+    """Where the bridge reads its own settings (mirrors paths.js bridgeEnvPath)."""
+    explicit = os.getenv("ZALO_BRIDGE_ENV")
+    if explicit:
+        return explicit
+    data_dir = os.getenv("ZALO_DATA_DIR") or os.path.join(os.path.expanduser("~"), ".hermes-zalo")
+    return os.path.join(os.path.abspath(data_dir), "bridge.env")
+
+
+def _write_bridge_env(values: Dict[str, str]) -> str:
+    """Merge ``values`` into bridge.env (other keys are kept). Empty values
+    remove the key. Returns the file path. The file can hold the bridge token,
+    so it is written with mode 0600."""
+    path = _bridge_env_path()
+    lines: List[str] = []
+    seen = set()
+    if os.path.exists(path):
+        with open(path, encoding="utf-8") as f:
+            for raw in f.read().splitlines():
+                m = re.match(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=", raw)
+                key = m.group(1) if m else None
+                if key in values:
+                    seen.add(key)
+                    if values[key] != "":
+                        lines.append(f"{key}={values[key]}")
+                else:
+                    lines.append(raw)
+    for key, val in values.items():
+        if key not in seen and val != "":
+            lines.append(f"{key}={val}")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write("# Written by `hermes gateway setup` (Zalo). Read by the hermes-zalo-plugin bridge.\n"
+                if not lines or not lines[0].startswith("#") else "")
+        f.write("\n".join(lines) + "\n")
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+    return path
+
+
 def _norm_text(s: str) -> str:
     """Lowercase + strip Vietnamese diacritics for forgiving name search."""
     import unicodedata
@@ -1135,7 +1249,7 @@ def interactive_setup() -> None:
     #   2) LOGGED OUT    → session expired: offer to QR-login right now
     #   3) OK            → auto-list contacts for number-pick
     bridge = bridge_url.strip().rstrip("/")
-    token = os.getenv("ZALO_PLUGIN_TOKEN", "")
+    token = get_env_value("ZALO_PLUGIN_TOKEN") or os.getenv("ZALO_PLUGIN_TOKEN", "")
     cli = _bridge_cli_hint()
     health = _probe_health(bridge, token)
 
@@ -1197,6 +1311,10 @@ def interactive_setup() -> None:
             default=get_env_value("ZALO_ALLOWED_USERS") or "",
         )
     save_env_value("ZALO_ALLOWED_USERS", (users_csv or "").strip())
+    # The Hermes gateway (not this adapter) decides who may talk to the bot:
+    # with no allowlist it refuses unknown senders unless ALLOW_ALL is set.
+    # "Empty = everyone" therefore needs ZALO_ALLOW_ALL_USERS=true.
+    save_env_value("ZALO_ALLOW_ALL_USERS", "false" if (users_csv or "").strip() else "true")
 
     # B) Allowed threads (groups + DMs).
     groups = (contacts or {}).get("groups") or []
@@ -1301,6 +1419,7 @@ def interactive_setup() -> None:
         action_items = [
             {"id": name, "name": f"{name}  [{grp}]"}
             for name, grp in sorted(_ACTION_GROUP.items())
+            if name not in _SENSITIVE_ACTIONS
         ]
         # Seed the picker default selection from any currently-saved allowlist.
         _picked_csv = _pick_ids(
@@ -1364,6 +1483,30 @@ def interactive_setup() -> None:
     if home:
         save_env_value("ZALO_HOME_CHANNEL", home.strip())
 
+    # ── Mirror bridge-side settings into the bridge's own bridge.env ─────────
+    # The bridge runs as a separate service and never reads this profile's
+    # .env, so without this step the action policy and token chosen above
+    # would silently have no effect.
+    bridge_values = {k: (get_env_value(k) or "").strip() for k in _BRIDGE_ENV_KEYS}
+    try:
+        env_file = _write_bridge_env(bridge_values)
+        print_info(f"✓ Đã ghi cấu hình phía bridge vào {env_file}")
+        if health is not None:
+            if prompt_yes_no("Khởi động lại bridge ngay để áp dụng cấu hình mới?", True):
+                import subprocess
+                import shutil
+                rcli = "hermes-zalo-plugin" if shutil.which("hermes-zalo-plugin") else None
+                rcmd = [rcli, "restart"] if rcli else ["npx", "hermes-zalo-plugin", "restart"]
+                try:
+                    subprocess.run(rcmd)
+                except Exception as e:
+                    print_warning(f"Không tự khởi động lại được bridge: {e}")
+            else:
+                print_info(f"   Khi nào muốn áp dụng:  {cli} restart")
+    except OSError as e:
+        print_warning(f"Không ghi được {_bridge_env_path()}: {e}")
+        print_info("   Bridge sẽ chạy với cấu hình cũ cho tới khi file này được cập nhật.")
+
     # ── Next steps: make sure the user always knows how to get a working bot ──
     print()
     print_info("─────────────────────────────────────────────")
@@ -1405,10 +1548,12 @@ def register(ctx):
         pii_safe=False,
         allow_update_command=True,
         platform_hint=(
-            "You are chatting via Zalo (a Vietnamese messaging app). Zalo does "
-            "not render markdown — use plain text only. The user likely writes "
-            "in Vietnamese; reply in Vietnamese unless they switch. Keep replies "
-            "concise and conversational. You can send images, files, stickers, "
-            "and voice. Messages over ~4000 chars are auto-split."
+            "You are chatting via Zalo (a Vietnamese messaging app). Basic "
+            "Markdown is converted to Zalo formatting: **bold**, *italic*, "
+            "__underline__, ~~strike~~ and # headings. Tables, links and code "
+            "blocks are shown as plain text, so avoid them. The user likely "
+            "writes in Vietnamese; reply in Vietnamese unless they switch. Keep "
+            "replies concise and conversational. You can send images, files, "
+            "stickers, and voice. Messages over ~4000 chars are auto-split."
         ),
     )

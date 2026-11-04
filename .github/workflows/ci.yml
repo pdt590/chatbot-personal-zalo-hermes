@@ -30,13 +30,27 @@ jobs:
         run: |
           node --check server.js
           node --check zaloClient.js
+          node --check markdownToZalo.js
           node --check permissions.js
           node --check paths.js
+          node --check service.js
           node --check login.mjs
           node --check install.mjs
           node --check uninstall.mjs
           node --check bin/cli.mjs
           node --check scripts/postinstall.mjs
+
+      - name: Shell script syntax
+        shell: bash
+        run: |
+          bash -n install.sh
+          bash -n uninstall.sh
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Adapter unit tests (Python)
+        run: python -m unittest discover -s test -p "test_*.py"
 
       - name: CLI smoke test (help + status, no login)
         run: |
