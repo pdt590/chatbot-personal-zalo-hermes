@@ -7,6 +7,7 @@ import path from "node:path";
 import { EventEmitter } from "node:events";
 import { Zalo, ThreadType, LoginQRCallbackEventType, Reactions } from "zca-js";
 import { markdownToZalo } from "./markdownToZalo.js";
+import { restrictToOwner, writePrivateFile } from "./paths.js";
 
 const DEFAULT_UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0";
@@ -229,6 +230,7 @@ export class ZaloClient extends EventEmitter {
   _loadCredentials() {
     try {
       if (fs.existsSync(this.credentialsPath)) {
+        restrictToOwner(this.credentialsPath); // fix files saved 0664 by older versions
         const raw = fs.readFileSync(this.credentialsPath, "utf-8");
         const c = JSON.parse(raw);
         if (c && c.cookie && c.imei && c.userAgent) return c;
@@ -241,8 +243,7 @@ export class ZaloClient extends EventEmitter {
 
   _saveCredentials(cred) {
     try {
-      fs.mkdirSync(path.dirname(this.credentialsPath), { recursive: true });
-      fs.writeFileSync(this.credentialsPath, JSON.stringify(cred, null, 2), "utf-8");
+      writePrivateFile(this.credentialsPath, JSON.stringify(cred, null, 2));
       console.log("[zalo] credentials saved to", this.credentialsPath);
     } catch (e) {
       console.error("[zalo] failed to save credentials:", e.message);
@@ -509,7 +510,7 @@ export class ZaloClient extends EventEmitter {
                   this._qrState.image = png;
                 }
                 try {
-                  fs.writeFileSync(this.qrPath, png, "base64");
+                  writePrivateFile(this.qrPath, png, "base64");
                 } catch {
                   /* ignore */
                 }

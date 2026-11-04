@@ -1,17 +1,17 @@
 # Graph Report - chatbot-personal-zalo-hermes  (2026-11-04)
 
 ## Corpus Check
-- 30 files · ~33,589 words
+- 28 files · ~33,550 words
 - Verdict: corpus is large enough that graph structure adds value.
 - Unclassified: 3 file(s) not represented in the graph (top: (none) 3)
 
 ## Summary
-- 524 nodes · 879 edges · 23 communities (17 shown, 6 thin omitted)
+- 481 nodes · 847 edges · 20 communities (14 shown, 6 thin omitted)
 - Extraction: 96% EXTRACTED · 4% INFERRED · 0% AMBIGUOUS · INFERRED: 38 edges (avg confidence: 0.89)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `57cf031c`
+- Built from commit: `35e30e78`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -23,18 +23,15 @@
 - server.js
 - npm Package Manifest
 - Architecture & Safety Concepts
-- CI Workflow
-- npm Publish Workflow
-- uninstall.mjs
+- paths.js
 - Hermes Plugin Manifest
 - Postinstall PATH Setup
 - Setup Flow Diagram
 - Zalo Chat Illustration
 - Logo Design
 - Shell Installer
-- zaloClient.js
 - test_adapter.py
-- permissions.js
+- zaloClient.js
 - CLAUDE.md
 - uninstall.sh script
 
@@ -47,8 +44,8 @@
 6. `main()` - 12 edges
 7. `interactive_setup()` - 11 edges
 8. `restartService()` - 11 edges
-9. `stopService()` - 9 edges
-10. `log()` - 9 edges
+9. `log()` - 9 edges
+10. `stopService()` - 9 edges
 
 ## Surprising Connections (you probably didn't know these)
 - `5. Ngoài phạm vi (chỉ ghi nhận)` --references--> `check_requirements()`  [INFERRED]
@@ -72,23 +69,23 @@
 - **Hermes assistant capabilities demoed over Zalo** — assets_zalo_chat_hermes_agent, assets_zalo_chat_zalo_messenger, assets_zalo_chat_reminder_use_case, assets_zalo_chat_email_summary_use_case [INFERRED 0.85]
 - **Account safety and access controls** — readme_action_permission_policy, readme_sender_thread_access_control, readme_info_call_rate_limiting, readme_bridge_token_auth, readme_unofficial_api_risk [INFERRED 0.85]
 
-## Communities (23 total, 6 thin omitted)
+## Communities (20 total, 6 thin omitted)
 
 ### Community 0 - "Zalo Bridge Client (Node)"
 Cohesion: 0.06
-Nodes (6): 1.3 `listener.stop()` sinh sự kiện `closed` giả, kích hoạt auto-relogin sai, 2. Lỗi mức trung bình, gracefulShutdown(), main(), readImageMetadata(), ZaloClient
+Nodes (4): 1.3 `listener.stop()` sinh sự kiện `closed` giả, kích hoạt auto-relogin sai, 2. Lỗi mức trung bình, gracefulShutdown(), ZaloClient
 
 ### Community 2 - "Adapter Setup & Config"
 Cohesion: 0.07
 Nodes (16): _bridge_cli_hint(), _bridge_env_path(), check_requirements(), _env_enablement(), _fetch_contacts(), interactive_setup(), is_connected(), _norm_text() (+8 more)
 
 ### Community 3 - "CLI, Login & Paths"
-Cohesion: 0.07
-Nodes (60): banner(), __dirname, help(), restart(), ROOT, status(), stop(), argv (+52 more)
+Cohesion: 0.09
+Nodes (45): banner(), __dirname, help(), restart(), ROOT, status(), stop(), argv (+37 more)
 
 ### Community 4 - "server.js"
-Cohesion: 0.08
-Nodes (25): app, assertSendableFile(), badRequest(), bridgeEnv, client, CREDENTIALS_PATH, errMessage(), FORCE_QR (+17 more)
+Cohesion: 0.07
+Nodes (26): app, assertSendableFile(), badRequest(), bridgeEnv, client, CREDENTIALS_PATH, errMessage(), FORCE_QR (+18 more)
 
 ### Community 5 - "npm Package Manifest"
 Cohesion: 0.06
@@ -98,17 +95,9 @@ Nodes (34): bin, hermes-zalo-plugin, bugs, url, dependencies, express@^4.21.2, q
 Cohesion: 0.11
 Nodes (23): Python aiohttp dependency, Generic /api/<method> passthrough (145-API parity), Background service (launchd / systemd / Scheduled Task), ZALO_PLUGIN_TOKEN shared-secret auth, GET /contacts endpoint, Bridge env configuration (ZALO_* vars, ~/.hermes-zalo data dir), GET /health endpoint, Hermes Agent gateway (+15 more)
 
-### Community 7 - "CI Workflow"
-Cohesion: 0.09
-Nodes (22): jobs, test, node, os, name, on, pull_request, push (+14 more)
-
-### Community 8 - "npm Publish Workflow"
-Cohesion: 0.09
-Nodes (22): concurrency, cancel-in-progress, group, NODE_AUTH_TOKEN, jobs, publish, name, on (+14 more)
-
-### Community 9 - "uninstall.mjs"
-Cohesion: 0.31
-Nodes (12): credentialsPath(), argv, disableZaloInConfig(), log(), PURGE, purgeCredentials(), removeBinLink(), removeHermesPlugin() (+4 more)
+### Community 9 - "paths.js"
+Cohesion: 0.10
+Nodes (30): bridgeAlreadyLoggedIn(), CREDENTIALS_PATH, main(), probeBridge(), QR_PATH, reloadRunningBridge(), bridgeEnvPath(), cliMsgDir() (+22 more)
 
 ### Community 10 - "Hermes Plugin Manifest"
 Cohesion: 0.12
@@ -130,37 +119,33 @@ Nodes (6): Chat Bubble Layout (bot left / user right, input bar), Email Summary 
 Cohesion: 0.50
 Nodes (4): hermes-zalo-plugin Logo, Abstract Messenger Mark (chat bubble + speed lines), Tagline: chat with your Hermes agent from Zalo, Hermes x Zalo Wordmark
 
-### Community 17 - "zaloClient.js"
-Cohesion: 0.08
-Nodes (20): stableNodeBin(), COLOR_RULES, EMPHASIS_RULES, mapRangeToClean(), markdownToZalo(), protectedRanges(), scan(), TextStyle (+12 more)
-
 ### Community 18 - "test_adapter.py"
 Cohesion: 0.09
 Nodes (6): BridgeEnvTest, Cfg, HomeChannelTest, _load_adapter(), SensitiveActionsTest, StripLeadingNameTest
 
-### Community 19 - "permissions.js"
-Cohesion: 0.19
-Nodes (11): ACTION_GROUP, ACTION_GROUPS, createPolicy(), check(), describe(), _csv(), DEFAULT_GROUPS, SENSITIVE_ACTIONS (+3 more)
+### Community 19 - "zaloClient.js"
+Cohesion: 0.06
+Nodes (31): stableNodeBin(), COLOR_RULES, EMPHASIS_RULES, mapRangeToClean(), markdownToZalo(), protectedRanges(), scan(), TextStyle (+23 more)
 
 ## Knowledge Gaps
 - **8 isolated node(s):** `Chat Bubble Layout (bot left / user right, input bar)`, `Abstract Messenger Mark (chat bubble + speed lines)`, `permissions.js (auto-generated action-group map)`, `Python aiohttp dependency`, `ZALO_PLUGIN_TOKEN shared-secret auth` (+3 more)
-  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 208 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
+  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 182 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
 - **6 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `ZaloClient` connect `Zalo Bridge Client (Node)` to `zaloClient.js`, `CLI, Login & Paths`, `server.js`, `npm Package Manifest`?**
-  _High betweenness centrality (0.202) - this node is a cross-community bridge._
+- **Why does `ZaloClient` connect `Zalo Bridge Client (Node)` to `paths.js`, `zaloClient.js`, `server.js`, `npm Package Manifest`?**
+  _High betweenness centrality (0.238) - this node is a cross-community bridge._
 - **What connects `Chat Bubble Layout (bot left / user right, input bar)`, `Abstract Messenger Mark (chat bubble + speed lines)`, `permissions.js (auto-generated action-group map)` to the rest of the system?**
   _8 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Zalo Bridge Client (Node)` be split into smaller, more focused modules?**
-  _Cohesion score 0.0576271186440678 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.06458635703918723 - nodes in this community are weakly interconnected._
 - **Why does `ZaloAdapter` connect `Python Adapter Actions` to `Adapter Setup & Config`?**
-  _High betweenness centrality (0.171) - this node is a cross-community bridge._
+  _High betweenness centrality (0.203) - this node is a cross-community bridge._
 - **Should `Python Adapter Actions` be split into smaller, more focused modules?**
   _Cohesion score 0.06229508196721312 - nodes in this community are weakly interconnected._
-- **Why does `5. Ngoài phạm vi (chỉ ghi nhận)` connect `CLI, Login & Paths` to `zaloClient.js`, `Adapter Setup & Config`?**
-  _High betweenness centrality (0.140) - this node is a cross-community bridge._
+- **Why does `5. Ngoài phạm vi (chỉ ghi nhận)` connect `CLI, Login & Paths` to `Adapter Setup & Config`, `zaloClient.js`?**
+  _High betweenness centrality (0.168) - this node is a cross-community bridge._
 - **Should `Adapter Setup & Config` be split into smaller, more focused modules?**
   _Cohesion score 0.06868686868686869 - nodes in this community are weakly interconnected._

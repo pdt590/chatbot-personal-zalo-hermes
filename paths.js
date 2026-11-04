@@ -18,8 +18,26 @@ export function dataDir() {
   const dir = fromEnv && fromEnv.trim()
     ? path.resolve(fromEnv.trim())
     : path.join(os.homedir(), ".hermes-zalo");
-  fs.mkdirSync(dir, { recursive: true });
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   return dir;
+}
+
+// Secrets (session cookie, login QR) must be readable by the owner only.
+// writeFileSync's `mode` applies only when the file is created, so chmod too
+// to tighten a file left group/world-readable by an older version. chmod is a
+// no-op on Windows, where the user profile ACL already protects the file.
+export function restrictToOwner(file) {
+  try {
+    if ((fs.statSync(file).mode & 0o077) !== 0) fs.chmodSync(file, 0o600);
+  } catch {
+    /* missing file or unsupported FS: nothing to tighten */
+  }
+}
+
+export function writePrivateFile(file, data, encoding = "utf-8") {
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  fs.writeFileSync(file, data, { encoding, mode: 0o600 });
+  restrictToOwner(file);
 }
 
 export function credentialsPath() {

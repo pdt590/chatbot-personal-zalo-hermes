@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { parseEnvFile, loadBridgeEnv } from "../paths.js";
+import { parseEnvFile, loadBridgeEnv, restrictToOwner, writePrivateFile } from "../paths.js";
 
 test("parseEnvFile handles comments, export, quotes and blanks", () => {
   const vars = parseEnvFile(
@@ -41,5 +41,30 @@ test("loadBridgeEnv tolerates a missing file", () => {
   } finally {
     if (saved === undefined) delete process.env.ZALO_BRIDGE_ENV;
     else process.env.ZALO_BRIDGE_ENV = saved;
+  }
+});
+
+test("writePrivateFile creates owner-only files and tightens existing ones", { skip: process.platform === "win32" }, () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "zalo-priv-"));
+  try {
+    const fresh = path.join(dir, "sub", "credentials.json");
+    writePrivateFile(fresh, "{}");
+    assert.equal(fs.statSync(fresh).mode & 0o777, 0o600);
+    assert.equal(fs.readFileSync(fresh, "utf-8"), "{}");
+
+    const old = path.join(dir, "old.json"); // as saved by <=1.0.13
+    fs.writeFileSync(old, "x");
+    fs.chmodSync(old, 0o664);
+    writePrivateFile(old, "y");
+    assert.equal(fs.statSync(old).mode & 0o777, 0o600);
+
+    const loaded = path.join(dir, "loaded.json");
+    fs.writeFileSync(loaded, "z");
+    fs.chmodSync(loaded, 0o644);
+    restrictToOwner(loaded);
+    assert.equal(fs.statSync(loaded).mode & 0o777, 0o600);
+    restrictToOwner(path.join(dir, "missing.json")); // must not throw
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });

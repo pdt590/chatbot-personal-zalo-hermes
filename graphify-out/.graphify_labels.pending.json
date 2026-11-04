@@ -1,9 +1,8 @@
 {
   "4": "server.js",
-  "9": "uninstall.mjs",
-  "17": "zaloClient.js",
+  "9": "paths.js",
   "18": "test_adapter.py",
-  "19": "permissions.js",
+  "19": "zaloClient.js",
   "20": "CLAUDE.md",
   "21": "uninstall.sh script",
   "22": "uninstall.ps1"
