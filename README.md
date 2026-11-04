@@ -79,7 +79,7 @@ The package has two halves:
 
 | Part | Where it runs | Job |
 |---|---|---|
-| **Bridge** (`server.js`, `zaloClient.js`) | Background service: systemd user unit (Linux), launchd agent (macOS), Scheduled Task at logon (Windows) | Holds the Zalo session and keeps it alive (keepalive, automatic cookie re-login). Pushes inbound events over SSE (15 s heartbeat, `Last-Event-ID` replay). Exposes REST routes for all 145 zca-js methods, gated by an action policy. |
+| **Bridge** (`server.js`, `zaloClient.js`) | Background service: systemd user unit (Linux), launchd agent (macOS), Scheduled Task at logon (Windows) | Holds the Zalo session and keeps it alive (keepalive, automatic cookie re-login). Pushes inbound events over SSE (15 s heartbeat, `Last-Event-ID` replay). Exposes REST routes for all 154 zca-js methods, gated by an action policy. |
 | **Adapter** (`hermes-plugin/`) | Inside `hermes gateway`, as plugin `zalo-platform` | Turns SSE events into Hermes messages and downloads inbound media. Decides which chats the bot answers. Sends replies through the bridge. |
 
 Data lives in `~/.hermes-zalo/` (`ZALO_DATA_DIR` overrides it): `credentials.json`,

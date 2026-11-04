@@ -78,7 +78,7 @@ Package gồm hai phần:
 
 | Phần | Chạy ở đâu | Nhiệm vụ |
 |---|---|---|
-| **Bridge** (`server.js`, `zaloClient.js`) | Service chạy nền: systemd user unit (Linux), launchd agent (macOS), Scheduled Task khi đăng nhập Windows | Giữ phiên Zalo luôn sống (keepalive, tự đăng nhập lại bằng cookie). Đẩy sự kiện đến qua SSE (heartbeat 15 giây, phát lại theo `Last-Event-ID`). Mở REST route cho cả 145 hàm của zca-js, có kiểm soát quyền. |
+| **Bridge** (`server.js`, `zaloClient.js`) | Service chạy nền: systemd user unit (Linux), launchd agent (macOS), Scheduled Task khi đăng nhập Windows | Giữ phiên Zalo luôn sống (keepalive, tự đăng nhập lại bằng cookie). Đẩy sự kiện đến qua SSE (heartbeat 15 giây, phát lại theo `Last-Event-ID`). Mở REST route cho cả 154 hàm của zca-js, có kiểm soát quyền. |
 | **Adapter** (`hermes-plugin/`) | Bên trong `hermes gateway`, là plugin `zalo-platform` | Chuyển sự kiện SSE thành tin nhắn Hermes và tải media đến. Quyết định bot trả lời ở cuộc chat nào. Gửi câu trả lời qua bridge. |
 
 Dữ liệu nằm ở `~/.hermes-zalo/` (đổi bằng `ZALO_DATA_DIR`): `credentials.json`,

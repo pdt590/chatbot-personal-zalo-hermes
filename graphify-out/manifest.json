@@ -1,8 +1,8 @@
 {
   ".github/workflows/ci.yml": {
-    "mtime": 1793784228.2121916,
-    "seen": 1793784376.3444412,
-    "ast_hash": "646e8ea3e7aef97e82fb7508b73f8030",
+    "mtime": 1793785143.9891717,
+    "seen": 1793785866.8367631,
+    "ast_hash": "44a5fa314d579ddb711b018b0dc3d75d",
     "semantic_hash": ""
   },
   ".github/workflows/publish.yml": {
@@ -24,9 +24,9 @@
     "semantic_hash": "f249b7ff9f0b9e44092963aa540c2600"
   },
   "hermes-plugin/adapter.py": {
-    "mtime": 1793783214.067308,
-    "seen": 1793783824.4163427,
-    "ast_hash": "05b5fa5a79bcd42bee0644147746bf20",
+    "mtime": 1793785844.0061557,
+    "seen": 1793785866.8367813,
+    "ast_hash": "b5b78ac7e81eb37e89caeffdcea2ca02",
     "semantic_hash": ""
   },
   "hermes-plugin/plugin.yaml": {
@@ -66,9 +66,9 @@
     "semantic_hash": ""
   },
   "package.json": {
-    "mtime": 1793784228.2121916,
-    "seen": 1793784376.3444765,
-    "ast_hash": "826201a11098dafc130cb0dacf7346de",
+    "mtime": 1793785813.5210626,
+    "seen": 1793785866.836801,
+    "ast_hash": "1d739c1b7b567258c5fd20424e36796f",
     "semantic_hash": ""
   },
   "paths.js": {
@@ -78,9 +78,9 @@
     "semantic_hash": ""
   },
   "permissions.js": {
-    "mtime": 1793782930.7768877,
-    "seen": 1793783824.4163702,
-    "ast_hash": "02af0ba30ec643b7fdb7e802684ff8a5",
+    "mtime": 1793785844.0021555,
+    "seen": 1793785866.836806,
+    "ast_hash": "b2d3884f81f9e0b7f2c288380ebb6382",
     "semantic_hash": ""
   },
   "scripts/postinstall.mjs": {
@@ -96,9 +96,9 @@
     "semantic_hash": ""
   },
   "uninstall.mjs": {
-    "mtime": 1793784284.774241,
-    "seen": 1793784376.3445036,
-    "ast_hash": "5e1bf6f4cfea29d12756ed8fd16983f9",
+    "mtime": 1793785143.5491562,
+    "seen": 1793785866.8368268,
+    "ast_hash": "9d0342606a6f989c3302260645243c59",
     "semantic_hash": ""
   },
   "zaloClient.js": {
@@ -108,15 +108,15 @@
     "semantic_hash": ""
   },
   "README.md": {
-    "mtime": 1793784373.7654643,
-    "seen": 1793784376.3445146,
-    "ast_hash": "846af58942c22f701f595f8a511885d9",
+    "mtime": 1793785844.0181563,
+    "seen": 1793785866.8368425,
+    "ast_hash": "a608c81c7592624677ac983badb951f9",
     "semantic_hash": ""
   },
   "README.vi.md": {
-    "mtime": 1793784373.7654643,
-    "seen": 1793784376.3445165,
-    "ast_hash": "78c08cd5228f032bdd5d2d45cf828e1a",
+    "mtime": 1793785844.0221562,
+    "seen": 1793785866.8368447,
+    "ast_hash": "7c0cf91670f446e0bdf4ff1cd6a94380",
     "semantic_hash": ""
   },
   "assets/logo.svg": {
@@ -156,9 +156,9 @@
     "semantic_hash": ""
   },
   "test/permissions.test.mjs": {
-    "mtime": 1793783247.6445374,
-    "seen": 1793783824.416383,
-    "ast_hash": "5e227946299db43b66bcea856719ca11",
+    "mtime": 1793785862.0548031,
+    "seen": 1793785866.836822,
+    "ast_hash": "c9bbbcbae8bd5e87fe8b4326f5b172cb",
     "semantic_hash": ""
   },
   "test/test_adapter.py": {
@@ -185,10 +185,22 @@
     "ast_hash": "6bceec38db609baafbfbb9eb29921b93",
     "semantic_hash": ""
   },
+  "uninstall.ps1": {
+    "mtime": 1793785135.0608556,
+    "seen": 1793785866.8368297,
+    "ast_hash": "49fc4684ecbb8ee807395a7f4aac77ed",
+    "semantic_hash": ""
+  },
+  "uninstall.sh": {
+    "mtime": 1793785135.0568554,
+    "seen": 1793785866.8368325,
+    "ast_hash": "94c21351639870e7ba60b479d45b79a2",
+    "semantic_hash": ""
+  },
   "package-lock.json": {
-    "mtime": 1793780248.0328352,
-    "seen": 1793783824.4164112,
-    "ast_hash": "ed9caf69fcd433bfc71d1ea9bd0501d3",
+    "mtime": 1793785813.5770648,
+    "seen": 1793785866.8368547,
+    "ast_hash": "763a5d14bd81019f40e3806f9612e29d",
     "semantic_hash": ""
   }
 }

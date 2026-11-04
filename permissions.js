@@ -1,4 +1,4 @@
-// AUTO-GENERATED action→permission-group map (145 zca-js APIs).
+// AUTO-GENERATED action→permission-group map (154 zca-js APIs).
 // Groups by danger level: read < send < interact < manage < destructive.
 export const ACTION_GROUPS = ["read", "send", "interact", "manage", "destructive"];
 export const DEFAULT_GROUPS = ["read", "send", "interact"];
@@ -19,6 +19,7 @@ export const ACTION_GROUP = {
   "changeGroupName": "manage",
   "changeGroupOwner": "destructive",
   "createAutoReply": "manage",
+  "createBankAccount": "destructive",
   "createCatalog": "manage",
   "createGroup": "manage",
   "createNote": "interact",
@@ -27,6 +28,7 @@ export const ACTION_GROUP = {
   "createReminder": "interact",
   "deleteAutoReply": "destructive",
   "deleteAvatar": "destructive",
+  "deleteBankAccount": "destructive",
   "deleteCatalog": "destructive",
   "deleteChat": "destructive",
   "deleteGroupInviteBox": "destructive",
@@ -69,7 +71,10 @@ export const ACTION_GROUP = {
   "getGroupMembersInfo": "read",
   "getHiddenConversations": "read",
   "getLabels": "read",
+  "getListBank": "read",
+  "getListBankAccount": "read",
   "getListBoard": "read",
+  "getListDevice": "read",
   "getListReminder": "read",
   "getMultiUsersByPhones": "read",
   "getMute": "read",
@@ -97,7 +102,9 @@ export const ACTION_GROUP = {
   "lastOnline": "read",
   "leaveGroup": "destructive",
   "lockPoll": "interact",
+  "lostFocus": "interact",
   "parseLink": "send",
+  "registerCatalog": "manage",
   "rejectFriendRequest": "manage",
   "removeFriend": "destructive",
   "removeFriendAlias": "manage",
@@ -110,6 +117,7 @@ export const ACTION_GROUP = {
   "resetHiddenConversPin": "destructive",
   "reuseAvatar": "manage",
   "reviewPendingMemberRequest": "manage",
+  "scanURL": "read",
   "searchSticker": "read",
   "sendBankCard": "send",
   "sendCard": "send",
@@ -134,6 +142,7 @@ export const ACTION_GROUP = {
   "updateArchivedChatList": "manage",
   "updateAutoDeleteChat": "manage",
   "updateAutoReply": "manage",
+  "updateBankAccount": "destructive",
   "updateCatalog": "manage",
   "updateGroupSettings": "manage",
   "updateHiddenConversPin": "destructive",

@@ -42,7 +42,7 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 # ── zca-js action → permission-group map (KEEP IN SYNC WITH permissions.js) ──
-# Mirrors ACTION_GROUP in the bridge's permissions.js (145 APIs; checked by
+# Mirrors ACTION_GROUP in the bridge's permissions.js (154 APIs; checked by
 # test/permissions.test.mjs). Bundled
 # statically so `hermes gateway setup` can offer a custom action picker even
 # when the bridge is offline. If permissions.js changes, regenerate this.
@@ -63,6 +63,7 @@ _ACTION_GROUP = {
     "changeGroupName": "manage",
     "changeGroupOwner": "destructive",
     "createAutoReply": "manage",
+    "createBankAccount": "destructive",
     "createCatalog": "manage",
     "createGroup": "manage",
     "createNote": "interact",
@@ -71,6 +72,7 @@ _ACTION_GROUP = {
     "createReminder": "interact",
     "deleteAutoReply": "destructive",
     "deleteAvatar": "destructive",
+    "deleteBankAccount": "destructive",
     "deleteCatalog": "destructive",
     "deleteChat": "destructive",
     "deleteGroupInviteBox": "destructive",
@@ -113,7 +115,10 @@ _ACTION_GROUP = {
     "getGroupMembersInfo": "read",
     "getHiddenConversations": "read",
     "getLabels": "read",
+    "getListBank": "read",
+    "getListBankAccount": "read",
     "getListBoard": "read",
+    "getListDevice": "read",
     "getListReminder": "read",
     "getMultiUsersByPhones": "read",
     "getMute": "read",
@@ -141,7 +146,9 @@ _ACTION_GROUP = {
     "lastOnline": "read",
     "leaveGroup": "destructive",
     "lockPoll": "interact",
+    "lostFocus": "interact",
     "parseLink": "send",
+    "registerCatalog": "manage",
     "rejectFriendRequest": "manage",
     "removeFriend": "destructive",
     "removeFriendAlias": "manage",
@@ -154,6 +161,7 @@ _ACTION_GROUP = {
     "resetHiddenConversPin": "destructive",
     "reuseAvatar": "manage",
     "reviewPendingMemberRequest": "manage",
+    "scanURL": "read",
     "searchSticker": "read",
     "sendBankCard": "send",
     "sendCard": "send",
@@ -178,6 +186,7 @@ _ACTION_GROUP = {
     "updateArchivedChatList": "manage",
     "updateAutoDeleteChat": "manage",
     "updateAutoReply": "manage",
+    "updateBankAccount": "destructive",
     "updateCatalog": "manage",
     "updateGroupSettings": "manage",
     "updateHiddenConversPin": "destructive",

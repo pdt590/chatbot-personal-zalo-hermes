@@ -59,3 +59,15 @@ test("Python adapter's action map matches permissions.js", () => {
   const pySensitive = py.match(/_SENSITIVE_ACTIONS = \{([^}]*)\}/)[1];
   assert.deepEqual([...pySensitive.matchAll(/"(\w+)"/g)].map((m) => m[1]).sort(), [...SENSITIVE_ACTIONS].sort());
 });
+
+test("every zca-js API method has a permission group", () => {
+  // Methods the installed zca-js binds on its API class (this.x = xFactory(...)).
+  // `custom` registers new API functions at runtime, so it is deliberately unmapped
+  // (and therefore denied as an unknown action).
+  const src = fs.readFileSync(new URL("../node_modules/zca-js/dist/apis.js", import.meta.url), "utf-8");
+  const bound = [...src.matchAll(/this\.(\w+) = \w+Factory\(/g)].map((m) => m[1]).filter((m) => m !== "custom");
+  assert.ok(bound.length > 100, "could not parse zca-js API list");
+  const missing = bound.filter((m) => !Object.hasOwn(ACTION_GROUP, m));
+  assert.deepEqual(missing, [], `zca-js methods missing from ACTION_GROUP: ${missing.join(", ")}`);
+  assert.equal(createPolicy({ ZALO_ALLOWED_ACTION_GROUPS: "all", ZALO_ALLOW_DESTRUCTIVE: "true" }).check("custom").ok, false);
+});
