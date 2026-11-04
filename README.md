@@ -119,16 +119,33 @@ wizard say `hermes-zalo-plugin <command>`; in a source install that is
 
 The agent writes Markdown and the bridge turns it into Zalo text styles:
 
-| You write                                                              | Zalo shows                                   |
-| ---------------------------------------------------------------------- | -------------------------------------------- |
-| `**bold**` · `*italic*` · `__underline__` · `~~strike~~`    | bold · italic · underline · strikethrough |
-| `# Heading` at the start of a line                                   | large text                                   |
-| `{red:text}` · `{orange:…}` · `{yellow:…}` · `{green:…}` | colored text                                 |
+| You write                                                                  | Zalo shows                                 |
+| -------------------------------------------------------------------------- | ------------------------------------------ |
+| `**bold**` or `__bold__`                                                   | bold                                       |
+| `*italic*` or `_italic_`                                                   | italic                                     |
+| `***bold italic***`                                                        | bold + italic                              |
+| `~~strike~~`                                                               | strikethrough                              |
+| `` `code` ``                                                               | bold (Zalo has no monospace font)          |
+| `# Heading` (any level) at the start of a line                             | bold + large                               |
+| `> quote`                                                                  | italic                                     |
+| `1. item` or `1) item`                                                     | the number in bold + large                 |
+| `- item` or `* item`, indented sub-items                                   | `- item`, sub-items become `• item`        |
+| `[label](https://…)`                                                       | **label** (https://…)                      |
+| `[red]…[/red]` · `[orange]…[/orange]` · `[yellow]…[/yellow]` · `[green]…[/green]` | colored text                        |
 
-A marker must touch the words it wraps, so `* item` bullets and `2 * 3` stay as
-they are. Styles never cross a line break. Text inside `` `code` `` or `` ``` ``
-blocks is left untouched. Zalo has no tables, links or code blocks, so those
-arrive as plain text. Replies longer than about 4000 characters are split.
+Color tags ignore case and have Vietnamese aliases: `[do]` (red), `[cam]`
+(orange), `[vang]` (yellow), `[xanh]` (green). Other styles work inside them, e.g.
+`[red]Total: **500.000đ**[/red]`.
+
+Styles can be nested, e.g. `*italic with **bold** inside*`. A marker must touch
+the words it wraps, so `2 * 3`, `a ** b **`, `snake_case` and `my__var__x` stay
+as they are. Styles never cross a line break. In a ` ``` ` block the fences
+are removed and the content is sent as typed. `---` rules are dropped and runs
+of blank lines collapse into one. Zalo has no tables, so they arrive as plain
+text. Long replies are split into several messages, each within Zalo's limits
+(2000 characters, 40 styles, about 3000 bytes), preferring a paragraph or line
+break as the cut. A message that carries @mentions is sent as one message, and
+its text is left unconverted when formatting would shift the mention positions.
 
 ## Configuration
 

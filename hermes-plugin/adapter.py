@@ -1559,8 +1559,11 @@ def register(ctx):
         platform_hint=(
             "You are chatting via Zalo (a Vietnamese messaging app). Basic "
             "Markdown is converted to Zalo formatting: **bold**, *italic*, "
-            "__underline__, ~~strike~~ and # headings. Tables, links and code "
-            "blocks are shown as plain text, so avoid them. The user likely "
+            "~~strike~~, # headings (bold + large), > quotes (italic) and "
+            "`code` (bold). For colored text use [red]…[/red], [orange]…[/orange], "
+            "[yellow]…[/yellow] or [green]…[/green]; use color sparingly, for "
+            "warnings or key numbers. Links show as 'label (url)'. Tables and "
+            "code blocks are shown as plain text, so avoid them. The user likely "
             "writes in Vietnamese; reply in Vietnamese unless they switch. Keep "
             "replies concise and conversational. You can send images, files, "
             "stickers, and voice. Messages over ~4000 chars are auto-split."

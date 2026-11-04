@@ -6,8 +6,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { EventEmitter } from "node:events";
 import { Zalo, ThreadType, LoginQRCallbackEventType, Reactions } from "zca-js";
-import { markdownToZalo } from "./markdownToZalo.js";
+import { formatZaloMarkdown, formatAndChunkZaloMarkdown } from "./markdownToZalo.js";
 import { restrictToOwner, writePrivateFile } from "./paths.js";
+
+// Pause between the parts of a split reply so Zalo keeps them in order.
+const SEND_PART_DELAY_MS = 300;
 
 const DEFAULT_UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0";
@@ -953,23 +956,43 @@ export class ZaloClient extends EventEmitter {
 
   async sendText(threadId, threadType, text, mentions, quote, styles) {
     const msgText = String(text);
-    let content;
+    const tid = String(threadId);
+    const type = this._threadTypeEnum(threadType);
+    const hasMentions = Array.isArray(mentions) && mentions.length > 0;
 
-    if (styles && Array.isArray(styles) && styles.length > 0) {
-      // Explicit styles provided — trust the caller
-      content = { msg: msgText, styles };
-    } else {
-      // Auto-convert markdown syntax → Zalo styles
-      const converted = markdownToZalo(msgText);
-      content = { msg: converted.text };
-      if (converted.styles.length > 0) {
-        content.styles = converted.styles;
+    // Explicit styles or @mentions carry positions into the caller's text, so
+    // the text can't be reformatted or split: send it as one message.
+    if ((Array.isArray(styles) && styles.length > 0) || hasMentions) {
+      const content = { msg: msgText };
+      if (Array.isArray(styles) && styles.length > 0) {
+        content.styles = styles;
+      } else {
+        const converted = formatZaloMarkdown(msgText);
+        // Formatting moves characters, which would break mention positions.
+        if (converted.msg === msgText && converted.styles.length) content.styles = converted.styles;
       }
+      if (hasMentions) content.mentions = mentions;
+      if (quote) content.quote = quote;
+      return await this.api.sendMessage(content, tid, type);
     }
 
-    if (Array.isArray(mentions) && mentions.length) content.mentions = mentions;
-    if (quote) content.quote = quote;
-    return await this.api.sendMessage(content, String(threadId), this._threadTypeEnum(threadType));
+    // Markdown → Zalo styles, split into messages Zalo accepts (≤2000 chars,
+    // ≤40 styles, ~3000 bytes each). Hermes splits at ~4000 chars, which is
+    // above Zalo's limit, so a long reply can still arrive here as one chunk.
+    const parts = formatAndChunkZaloMarkdown(msgText);
+    if (!parts.length) parts.push({ msg: msgText, styles: [] });
+
+    const results = [];
+    for (let i = 0; i < parts.length; i++) {
+      const content = { msg: parts[i].msg };
+      if (parts[i].styles.length) content.styles = parts[i].styles;
+      if (quote && i === 0) content.quote = quote;
+      if (i > 0) await new Promise((r) => setTimeout(r, SEND_PART_DELAY_MS));
+      results.push(await this.api.sendMessage(content, tid, type));
+    }
+    // Callers read msgId from the result: hand back the last message sent.
+    const last = results[results.length - 1];
+    return results.length > 1 && last && typeof last === "object" ? { ...last, parts: results } : last;
   }
 
   // ── Reactions ──────────────────────────────────────────────────────────

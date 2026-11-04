@@ -1,16 +1,4 @@
 {
-  ".github/workflows/ci.yml": {
-    "mtime": 1793785143.9891717,
-    "seen": 1793785866.8367631,
-    "ast_hash": "44a5fa314d579ddb711b018b0dc3d75d",
-    "semantic_hash": ""
-  },
-  ".github/workflows/publish.yml": {
-    "mtime": 1793780248.028835,
-    "seen": 1793781812.0887313,
-    "ast_hash": "f59bc65bd61bfe391f4f1b3e1953d4f4",
-    "semantic_hash": "f59bc65bd61bfe391f4f1b3e1953d4f4"
-  },
   "bin/cli.mjs": {
     "mtime": 1793784223.6480262,
     "seen": 1793784376.3444507,
@@ -24,9 +12,9 @@
     "semantic_hash": "f249b7ff9f0b9e44092963aa540c2600"
   },
   "hermes-plugin/adapter.py": {
-    "mtime": 1793786206.4991703,
-    "seen": 1793787979.6663904,
-    "ast_hash": "b5b78ac7e81eb37e89caeffdcea2ca02",
+    "mtime": 1793800206.03718,
+    "seen": 1793800329.9213612,
+    "ast_hash": "998ac3e2dd5ad24a55f4ddb8ef397a62",
     "semantic_hash": ""
   },
   "hermes-plugin/plugin.yaml": {
@@ -60,9 +48,9 @@
     "semantic_hash": ""
   },
   "markdownToZalo.js": {
-    "mtime": 1793782994.49124,
-    "seen": 1793783824.4163618,
-    "ast_hash": "2af39db7e6cb03c59583d9eb1723adbe",
+    "mtime": 1793799805.6153972,
+    "seen": 1793800091.0110626,
+    "ast_hash": "d02aa045acd61efd65bec2956c009e6d",
     "semantic_hash": ""
   },
   "package.json": {
@@ -102,21 +90,21 @@
     "semantic_hash": ""
   },
   "zaloClient.js": {
-    "mtime": 1793787933.98952,
-    "seen": 1793787979.6664479,
-    "ast_hash": "b139b1f9ef990a6047e52aaa03f2b6e4",
+    "mtime": 1793800417.216587,
+    "seen": 1793800570.162851,
+    "ast_hash": "87e3449e9019892d2dbf9407fb6e0b3e",
     "semantic_hash": ""
   },
   "README.md": {
-    "mtime": 1793786206.4871697,
-    "seen": 1793787979.6664555,
-    "ast_hash": "a608c81c7592624677ac983badb951f9",
+    "mtime": 1793800567.4058895,
+    "seen": 1793800570.1628592,
+    "ast_hash": "72b4c0d86f7e895688541f8d1fdb66dd",
     "semantic_hash": ""
   },
   "README.vi.md": {
-    "mtime": 1793786206.4871697,
-    "seen": 1793787979.6664581,
-    "ast_hash": "7c0cf91670f446e0bdf4ff1cd6a94380",
+    "mtime": 1793800567.4058895,
+    "seen": 1793800570.1628618,
+    "ast_hash": "0a70e3db72222c87abb2158646f071df",
     "semantic_hash": ""
   },
   "assets/logo.svg": {
@@ -144,9 +132,9 @@
     "semantic_hash": ""
   },
   "test/markdownToZalo.test.mjs": {
-    "mtime": 1793783247.6445374,
-    "seen": 1793783824.4163783,
-    "ast_hash": "fdab7f50418a07ac03c06d0ef81f2e7a",
+    "mtime": 1793799819.1678555,
+    "seen": 1793800091.0110848,
+    "ast_hash": "171aa1a19bf3ff192196979a44663d35",
     "semantic_hash": ""
   },
   "test/paths.test.mjs": {
@@ -195,6 +183,12 @@
     "mtime": 1793785135.0568554,
     "seen": 1793785866.8368325,
     "ast_hash": "94c21351639870e7ba60b479d45b79a2",
+    "semantic_hash": ""
+  },
+  "test/sendText.test.mjs": {
+    "mtime": 1793800443.1215,
+    "seen": 1793800570.162835,
+    "ast_hash": "b34b0f43dc8feae9074d11e9edeb904d",
     "semantic_hash": ""
   },
   "package-lock.json": {

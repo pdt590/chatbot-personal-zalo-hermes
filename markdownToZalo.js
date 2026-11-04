@@ -1,256 +1,390 @@
-// markdownToZalo.js
-// Convert Markdown inline formatting to Zalo MessageContent styles array.
-//
-// Supported syntax:
-//   **bold**       → Bold (b)
-//   *italic*       → Italic (i)
-//   __underline__  → Underline (u)
-//   ~~strikethru~~ → StrikeThrough (s)
-//   # heading      → Big (f_18)
-//   {red:text}     → Red (also orange / yellow / green)
-//
-// Rules follow CommonMark closely enough for chat text: a marker must touch
-// the text it wraps ("* item" and "2 * 3" are not italics), spans never cross
-// a line break, "__" does not apply inside a word, and anything inside `code`
-// or ``` fences is left untouched.
-//
-// How it works:
-// 1. scan() finds every span and the marker characters to strip, in one pass.
-// 2. Strip the markers to produce clean text.
-// 3. Map each span's content range from original positions → clean positions.
-// 4. Output clean text + styles array.
+import { TextStyle } from "zca-js";
 
-const TextStyle = {
-  Bold: "b",
-  Italic: "i",
-  Underline: "u",
-  StrikeThrough: "s",
-  Red: "c_db342e",
-  Orange: "c_f27806",
-  Yellow: "c_f7b503",
-  Green: "c_15a85f",
-  Big: "f_18",
-  Small: "f_13",
+/**
+ * Markdown → Zalo native text styles.
+ *
+ * Zalo does not render Markdown. It does support a few text styles (bold,
+ * italic, strikethrough, a larger font size and four colors), sent next to the
+ * message as a list of { start, len, st } ranges. This module translates the
+ * Markdown the agent writes into that form, so the agent can write Markdown as
+ * it would anywhere else.
+ *
+ *   # Heading (any level)      → bold + large, whole line
+ *   **bold**, __bold__         → bold
+ *   *italic*, _italic_         → italic
+ *   ***both***, ___both___     → bold + italic
+ *   ~~strike~~                 → strikethrough
+ *   `code`                     → bold (Zalo has no monospace font)
+ *   ```fenced block```         → fences removed, content kept verbatim
+ *   > quote                    → italic, whole line
+ *   1. item, 1) item           → the number in bold + large
+ *   - item, * item, • item     → "- item"; indented sub-items → "• item"
+ *   [label](url)               → bold label followed by " (url)"
+ *   [red]…[/red]               → red; also [orange] [yellow] [green] and the
+ *                                Vietnamese aliases [do] [cam] [vang] [xanh]
+ *   ---                        → removed
+ *
+ * Styles nest, never cross a line break, and positions are UTF-16 indices into
+ * the output text (what zca-js expects).
+ */
+
+const BOLD = TextStyle.Bold || "b";
+const ITALIC = TextStyle.Italic || "i";
+const STRIKE = TextStyle.StrikeThrough || "s";
+// Larger font. Stacked with bold on headings and list numbers so the structure
+// of a long reply is easy to scan.
+const BIG = TextStyle.Big || "f_18";
+
+const COLORS = {
+  red: TextStyle.Red || "c_db342e",
+  green: TextStyle.Green || "c_15a85f",
+  orange: TextStyle.Orange || "c_f27806",
+  yellow: TextStyle.Yellow || "c_f7b503",
 };
 
-// Emphasis rules, applied in this order. `intraword: false` means the marker
-// may not touch a letter/digit on its outer side (so my__var__x stays as is).
-const EMPHASIS_RULES = [
-  { marker: "**", style: TextStyle.Bold, intraword: true },
-  { marker: "__", style: TextStyle.Underline, intraword: false },
-  { marker: "~~", style: TextStyle.StrikeThrough, intraword: true },
-  { marker: "*", style: TextStyle.Italic, intraword: true },
-];
+// Vietnamese color names, rewritten to the English tags before parsing.
+const COLOR_ALIASES = { do: "red", xanh: "green", cam: "orange", vang: "yellow" };
+const COLOR_ALIAS_RE = new RegExp(`\\[(\\/?)(${Object.keys(COLOR_ALIASES).join("|")})\\]`, "gi");
 
-// Color rules: {red:text} {orange:text} {yellow:text} {green:text}
-const COLOR_RULES = [
-  { open: "{red:", close: "}", style: TextStyle.Red },
-  { open: "{orange:", close: "}", style: TextStyle.Orange },
-  { open: "{yellow:", close: "}", style: TextStyle.Yellow },
-  { open: "{green:", close: "}", style: TextStyle.Green },
-];
+// ── Zalo per-message limits ──────────────────────────────────────────────────
 
-const WS = /\s/;
-const WORD = /[\p{L}\p{N}]/u;
+const MAX_CHARS = 2000;
+// Zalo accepts many styles per message, but stays reliable up to about 40.
+const MAX_STYLES = 40;
+// Zalo also rejects messages by payload size, not just by length or style
+// count. Across 223 real sends, every message refused with "unknown error" had
+// UTF-8 text bytes + style JSON length of 3448 or more, and every accepted one
+// was at most 3437. Vietnamese letters take 2–3 bytes and emoji 4, so a message
+// well under 2000 characters can still cross it. 3000 leaves a safety margin.
+const MAX_PAYLOAD_BYTES = 3000;
+// Each "@Name" mention travels in the same payload as one {pos, len, uid}
+// entry, about 50 bytes of JSON. Reserve room for every "@" so a message near
+// the limit still fits once mentions are attached.
+const MENTION_RESERVE_BYTES = 60;
+
+// Preferred places to cut a long message, best first. A cut is only taken if
+// it keeps at least 60% of the window, so chunks don't end up tiny.
+const CUT_MARKERS = ["\n\n", "\n", ". ", "; ", ", ", " "];
+const MIN_CUT_RATIO = 0.6;
+
+// ── Block-level patterns (whole line) ────────────────────────────────────────
+
+const FENCE_RE = /^\s*```/;
+const RULE_RE = /^\s*([-*_])\1{2,}\s*$/;
+const HEADING_RE = /^\s*#{1,6}\s+(.*)$/;
+const QUOTE_RE = /^\s*>\s?(.*)$/;
+const BULLET_RE = /^(\s*)[-*•]\s+/;
+const NUMBER_RE = /^(\s*)(\d+[.)]\s+)/;
+// Indent (in spaces) from which a bullet counts as a sub-item.
+const SUB_ITEM_INDENT = 2;
+
+// ── Inline patterns (matched at the current position) ────────────────────────
+
+const LINK_RE = /^\[([^\]\n]+)\]\(([^)\s]+)\)/;
+const STRIKE_RE = /^~~([\s\S]+?)~~/;
+// The text inside emphasis may not start or end with a space, so "a ** b **"
+// and "2 * 3 * 4" stay as typed.
+const BOLD_ITALIC_RE = /^(\*\*\*|___)(?!\s)([^\n]+?)(?<!\s)\1(?![*_])/;
+const BOLD_RE = /^(\*\*|__)(?!\s)([\s\S]+?)(?<!\s)\1/;
+const CODE_RE = /^`([^`\n]+)`/;
+// Italic may contain nested **bold** / __bold__, and its closing marker must
+// not be the start of a "**", so "*a **b** c*" is not cut at the bold's "*".
+const ITALIC_RE = /^([*_])(?!\s)((?:\*\*[^*\n]+?\*\*|__[^_\n]+?__|[^*_\n])+?)\1(?!\1)/;
+// Characters that may precede an opening marker (start of a word).
+const WORD_START_RE = /[\s(["'—–-]/;
+const WORD_CHAR_RE = /[\p{L}\p{N}_]/u;
 
 /**
- * JS-style string length (surrogate pairs = 2).
- */
-function jsStrLen(s) {
-  let len = 0;
-  for (const ch of s) {
-    len += ch.charCodeAt(0) > 0xFFFF ? 2 : 1;
-  }
-  return len;
-}
-
-/**
- * Mark code that must be left untouched: fenced blocks (```...```) and inline
- * code spans (`...`). Returns a boolean array indexed by UTF-16 position.
- */
-function protectedRanges(text) {
-  const prot = new Array(text.length).fill(false);
-  const mark = (s, e) => { for (let i = s; i < e; i++) prot[i] = true; };
-  const fence = /```[\s\S]*?(?:```|$)/g;
-  let m;
-  while ((m = fence.exec(text)) !== null) {
-    mark(m.index, m.index + m[0].length);
-    if (m[0].length === 0) fence.lastIndex++;
-  }
-  const inline = /`[^`\n]+`/g;
-  while ((m = inline.exec(text)) !== null) {
-    if (!prot[m.index]) mark(m.index, m.index + m[0].length);
-  }
-  return prot;
-}
-
-/**
- * Single pass over the text that finds every formatting span and the marker
- * characters to strip. Markers already used by one rule cannot be reused by
- * another, so "**bold**" never also produces italics.
+ * Convert Markdown to a single Zalo message.
  *
- * Returns { spans: [{contentStart, contentEnd, style}], syntax: Set<index> }
- * with positions in the ORIGINAL text.
+ * @param {string} input Markdown text
+ * @returns {{ msg: string, styles: Array<{ start: number, len: number, st: string }> }}
  */
-function scan(text) {
-  const prot = protectedRanges(text);
-  const used = new Array(text.length).fill(false);
-  const spans = [];
-  const free = (s, len) => {
-    for (let k = s; k < s + len; k++) if (k >= text.length || prot[k] || used[k]) return false;
-    return true;
+export function formatZaloMarkdown(input) {
+  if (!input) return { msg: "", styles: [] };
+
+  const source = String(input).replace(
+    COLOR_ALIAS_RE,
+    (_, slash, name) => `[${slash}${COLOR_ALIASES[name.toLowerCase()]}]`,
+  );
+
+  const outLines = [];
+  const styles = [];
+  let offset = 0; // position of the current line in the output text
+  let inCodeBlock = false;
+  let prevBlank = false;
+
+  for (const rawLine of source.split(/\r?\n/)) {
+    // Fences are dropped; lines between them are kept exactly as written.
+    if (FENCE_RE.test(rawLine)) {
+      inCodeBlock = !inCodeBlock;
+      continue;
+    }
+    if (inCodeBlock) {
+      outLines.push(rawLine);
+      offset += rawLine.length + 1;
+      prevBlank = false;
+      continue;
+    }
+
+    // Zalo has no horizontal rule, so drop it. prevBlank is left alone: the
+    // rule disappears, so blank lines around it should merge into one.
+    if (RULE_RE.test(rawLine)) continue;
+
+    // Collapse runs of blank lines; on Zalo they show as a large empty gap.
+    const isBlank = rawLine.trim() === "";
+    if (isBlank && prevBlank) continue;
+    prevBlank = isBlank;
+
+    const block = parseBlock(rawLine);
+    const { text, styles: inline } = renderInline(block.line, offset);
+
+    styles.push(...inline);
+    if (text.length) {
+      for (const st of block.lineStyles) styles.push({ start: offset, len: text.length, st });
+    }
+    if (block.number) {
+      const start = offset + block.number.start;
+      styles.push({ start, len: block.number.len, st: BOLD }, { start, len: block.number.len, st: BIG });
+    }
+
+    outLines.push(text);
+    offset += text.length + 1; // + the newline
+  }
+
+  return { msg: outLines.join("\n"), styles };
+}
+
+/**
+ * Convert Markdown and split the result into messages that each fit Zalo's
+ * limits (characters, style count and payload size). Styles are never dropped:
+ * a style that crosses a cut is clipped onto both sides.
+ *
+ * @param {string} input Markdown text
+ * @returns {Array<{ msg: string, styles: Array<{ start: number, len: number, st: string }> }>}
+ *   Empty when the input has no visible text.
+ */
+export function formatAndChunkZaloMarkdown(input) {
+  if (!input) return [];
+
+  const formatted = formatZaloMarkdown(String(input).trim());
+  if (!formatted.msg.trim()) return [];
+  if (fitsZaloLimits(formatted)) return [formatted];
+
+  const chunks = [];
+  for (let start = 0; start < formatted.msg.length; ) {
+    const end = findChunkEnd(formatted, start);
+    chunks.push(sliceMessage(formatted, start, end));
+    start = end;
+  }
+  return chunks.filter((chunk) => chunk.msg.trim());
+}
+
+// ── Block parsing ────────────────────────────────────────────────────────────
+
+/**
+ * Strip a line's block markup and report the styles it implies.
+ * `number` is the position of a leading "1. " in the returned line, if any.
+ */
+function parseBlock(line) {
+  let lineStyles = [];
+  const heading = line.match(HEADING_RE);
+  const quote = heading ? null : line.match(QUOTE_RE);
+  if (heading) {
+    line = heading[1];
+    lineStyles = [BOLD, BIG];
+  } else if (quote) {
+    line = quote[1];
+    lineStyles = [ITALIC];
+  }
+
+  line = line.replace(BULLET_RE, (_, indent) =>
+    indent.length >= SUB_ITEM_INDENT ? `${indent}• ` : `${indent}- `,
+  );
+
+  // A heading is already bold + large as a whole; don't style its number twice.
+  const num = heading ? null : line.match(NUMBER_RE);
+  const number = num ? { start: num[1].length, len: num[2].length } : null;
+  return { line, lineStyles, number };
+}
+
+// ── Inline rendering ─────────────────────────────────────────────────────────
+
+/**
+ * Render the inline markup of one line. `base` is the line's position in the
+ * output text, so the returned style ranges are absolute.
+ */
+function renderInline(line, base) {
+  const styles = [];
+  let out = "";
+  let i = 0;
+
+  // Render `inner` (which may hold more markup) and apply `stList` over it.
+  const wrap = (inner, consumed, ...stList) => {
+    const rendered = renderInline(inner, base + out.length);
+    const start = base + out.length;
+    out += rendered.text;
+    styles.push(...rendered.styles);
+    if (rendered.text.length) {
+      for (const st of stList) styles.push({ start, len: rendered.text.length, st });
+    }
+    i += consumed;
   };
-  const take = (s, len) => { for (let k = s; k < s + len; k++) used[k] = true; };
 
-  // Colors first so emphasis inside {red:**x**} still works.
-  for (const rule of COLOR_RULES) {
-    let i = 0;
-    while ((i = text.indexOf(rule.open, i)) !== -1) {
-      const cs = i + rule.open.length;
-      let j = cs;
-      while (j < text.length && text[j] !== "\n" && !(text.startsWith(rule.close, j) && free(j, rule.close.length))) j++;
-      if (j < text.length && j > cs && text.startsWith(rule.close, j) && free(i, rule.open.length)) {
-        take(i, rule.open.length);
-        take(j, rule.close.length);
-        spans.push({ contentStart: cs, contentEnd: j, style: rule.style });
-        i = j + rule.close.length;
-      } else {
-        i++;
-      }
+  while (i < line.length) {
+    const rest = line.slice(i);
+    let m;
+
+    // Color alone, without bold: stacking two styles on the same text doubles
+    // its share of the payload budget, and the color already stands out.
+    if ((m = matchColorTag(rest))) {
+      wrap(m.inner, m.consumed, COLORS[m.name]);
+      continue;
     }
-  }
 
-  for (const rule of EMPHASIS_RULES) {
-    const mk = rule.marker;
-    const ml = mk.length;
-    const canOpen = (i) => {
-      if (!text.startsWith(mk, i) || !free(i, ml)) return false;
-      const after = text[i + ml];
-      if (after === undefined || WS.test(after)) return false;
-      // A lone "*" next to an unused "*" is part of a longer run, not italics.
-      if (ml === 1 && ((text[i - 1] === mk && !used[i - 1]) || (after === mk && !used[i + 1]))) return false;
-      if (!rule.intraword && i > 0 && WORD.test(text[i - 1])) return false;
-      return true;
-    };
-    const canClose = (j) => {
-      if (!text.startsWith(mk, j) || !free(j, ml)) return false;
-      const before = text[j - 1];
-      if (before === undefined || WS.test(before)) return false;
-      if (ml === 1 && text[j + 1] === mk && !used[j + 1]) return false;
-      if (!rule.intraword && j + ml < text.length && WORD.test(text[j + ml])) return false;
-      return true;
-    };
-
-    let i = 0;
-    while (i < text.length) {
-      if (!canOpen(i)) { i++; continue; }
-      let j = i + ml + 1; // content must be non-empty
-      let closeAt = -1;
-      for (; j < text.length && text[j] !== "\n"; j++) {
-        if (canClose(j)) { closeAt = j; break; }
-      }
-      if (closeAt === -1) { i++; continue; }
-      take(i, ml);
-      take(closeAt, ml);
-      spans.push({ contentStart: i + ml, contentEnd: closeAt, style: rule.style });
-      i = closeAt + ml;
+    if ((m = rest.match(LINK_RE))) {
+      const [whole, label, url] = m;
+      if (label.length) styles.push({ start: base + out.length, len: label.length, st: BOLD });
+      out += `${label} (${url})`;
+      i += whole.length;
+      continue;
     }
+
+    if ((m = rest.match(STRIKE_RE))) {
+      wrap(m[1], m[0].length, STRIKE);
+      continue;
+    }
+
+    // "__" only counts at word boundaries, so names like my__var__x stay intact.
+    if ((m = rest.match(BOLD_ITALIC_RE)) && (m[1] === "***" || isUnderscoreRun(line, i, m[0].length))) {
+      wrap(m[2], m[0].length, BOLD, ITALIC);
+      continue;
+    }
+
+    if ((m = rest.match(BOLD_RE)) && (m[1] === "**" || isUnderscoreRun(line, i, m[0].length))) {
+      wrap(m[2], m[0].length, BOLD);
+      continue;
+    }
+
+    // Code content is literal: no markup inside it is rendered.
+    if ((m = rest.match(CODE_RE))) {
+      styles.push({ start: base + out.length, len: m[1].length, st: BOLD });
+      out += m[1];
+      i += m[0].length;
+      continue;
+    }
+
+    // Only at the start of a word, so snake_case and a*b stay as typed.
+    if ((m = rest.match(ITALIC_RE)) && isWordStart(line, i)) {
+      wrap(m[2], m[0].length, ITALIC);
+      continue;
+    }
+
+    out += line[i];
+    i += 1;
   }
 
-  // Heading: one to six # followed by a space/tab at the start of a line.
-  const hdRe = /(^|\n)(#{1,6}[ \t]+)/g;
-  let m;
-  while ((m = hdRe.exec(text)) !== null) {
-    const ms = m.index + m[1].length;
-    const cs = ms + m[2].length;
-    if (!free(ms, m[2].length)) continue;
-    const nl = text.indexOf("\n", cs);
-    const ce = nl === -1 ? text.length : nl;
-    take(ms, m[2].length);
-    if (ce > cs) spans.push({ contentStart: cs, contentEnd: ce, style: TextStyle.Big });
-  }
-
-  const syntax = new Set();
-  used.forEach((u, idx) => { if (u) syntax.add(idx); });
-  spans.sort((a, b) => a.contentStart - b.contentStart);
-  return { spans, syntax };
+  return { text: out, styles };
 }
 
-/**
- * Map a range from original text positions to clean text positions.
- * Range: [start, end) in original text (inclusive start, exclusive end).
- * Returns { start, len } in clean text, or null if nothing survives.
- */
-function mapRangeToClean(start, end, originalToClean) {
-  let cs = -1;
-  let ce = -1;
-  for (let i = start; i < end; i++) {
-    if (originalToClean.has(i)) {
-      const c = originalToClean.get(i);
-      if (cs === -1) cs = c;
-      ce = c + 1;
-    }
+/** Match "[color]…[/color]" (any case) at the start of `rest`. */
+function matchColorTag(rest) {
+  if (rest[0] !== "[") return null;
+  const lower = rest.toLowerCase();
+  for (const name of Object.keys(COLORS)) {
+    const open = `[${name}]`;
+    if (!lower.startsWith(open)) continue;
+    const close = lower.indexOf(`[/${name}]`, open.length);
+    if (close === -1) continue;
+    return { name, inner: rest.slice(open.length, close), consumed: close + name.length + 3 };
   }
-  if (cs === -1) return null;
-  return { start: cs, len: ce - cs };
+  return null;
 }
 
-/**
- * Parse markdown text, return clean text + styles array for Zalo.
- * Positions are UTF-16 code-unit indices (JavaScript string indices).
- *
- * @param {string} md - Markdown text with inline formatting
- * @returns {{ text: string, styles: Array<{start:number, len:number, st:string}> }}
- */
-function markdownToZalo(md) {
-  if (!md) return { text: "", styles: [] };
-
-  const { spans, syntax } = scan(md);
-
-  // Build clean text and the original→clean position map.
-  const cleanChars = [];
-  const originalToClean = new Map();
-  for (let i = 0; i < md.length; i++) {
-    if (!syntax.has(i)) {
-      originalToClean.set(i, cleanChars.length);
-      cleanChars.push(md[i]);
-    }
-  }
-  const cleanText = cleanChars.join("");
-
-  const styleEntries = [];
-  for (const sp of spans) {
-    const mapped = mapRangeToClean(sp.contentStart, sp.contentEnd, originalToClean);
-    if (mapped && mapped.len > 0) {
-      styleEntries.push({ start: mapped.start, len: mapped.len, st: sp.style });
-    }
-  }
-
-  // Merge adjacent same-style entries.
-  styleEntries.sort((a, b) => a.start - b.start);
-  const merged = [];
-  for (const e of styleEntries) {
-    const last = merged[merged.length - 1];
-    if (last && last.st === e.st && last.start + last.len === e.start) {
-      last.len += e.len;
-    } else {
-      merged.push({ ...e });
-    }
-  }
-
-  return { text: cleanText, styles: merged };
+/** An underscore marker spanning [i, i+len) with no letter or digit glued to either end. */
+function isUnderscoreRun(line, i, len) {
+  const after = line[i + len];
+  return isWordStart(line, i) && (after === undefined || !WORD_CHAR_RE.test(after));
 }
 
-/**
- * Simple stripper (used as fallback).
- */
-function stripMarkdown(s) {
-  return s
-    .replace(/\*\*(.+?)\*\*/g, "$1")
-    .replace(/\*(.+?)\*/g, "$1")
-    .replace(/__(.+?)__/g, "$1")
-    .replace(/~~(.+?)~~/g, "$1")
-    .replace(/(^|\n)#\s/g, "$1");
+function isWordStart(line, i) {
+  return i === 0 || WORD_START_RE.test(line[i - 1]);
 }
 
-export { markdownToZalo, TextStyle, jsStrLen, stripMarkdown };
+// ── Chunking ─────────────────────────────────────────────────────────────────
+
+function payloadBytes({ msg, styles }) {
+  const mentions = (msg.match(/@/g) || []).length;
+  return Buffer.byteLength(msg, "utf8") + JSON.stringify(styles).length + mentions * MENTION_RESERVE_BYTES;
+}
+
+function fitsZaloLimits(formatted) {
+  return formatted.msg.length <= MAX_CHARS
+    && formatted.styles.length <= MAX_STYLES
+    && payloadBytes(formatted) <= MAX_PAYLOAD_BYTES;
+}
+
+/** Find where the chunk starting at `start` should end, honouring every limit. */
+function findChunkEnd(formatted, start) {
+  const { msg, styles } = formatted;
+  let end = preferReadableCut(msg, start, Math.min(start + MAX_CHARS, msg.length));
+
+  // Too many styles: pull the cut back to a style boundary that fits.
+  while (countStylesIn(styles, start, end) > MAX_STYLES && end > start + 1) {
+    end = lastFittingStyleBoundary(styles, start, end) || Math.floor((start + end) / 2);
+    end = Math.max(start + 1, Math.min(end, start + MAX_CHARS));
+  }
+
+  // Too many bytes: shrink in proportion to the overshoot, still preferring a
+  // readable cut. `end` strictly decreases each round, so the loop ends.
+  let bytes = payloadBytes(sliceMessage(formatted, start, end));
+  while (bytes > MAX_PAYLOAD_BYTES && end > start + 1) {
+    const target = start + Math.floor(((end - start) * MAX_PAYLOAD_BYTES) / bytes);
+    end = preferReadableCut(msg, start, Math.max(start + 1, Math.min(target, end - 1)));
+    // Never split an emoji (a UTF-16 surrogate pair) in half.
+    if (end > start + 1 && isHighSurrogate(msg.charCodeAt(end - 1))) end -= 1;
+    bytes = payloadBytes(sliceMessage(formatted, start, end));
+  }
+
+  return end;
+}
+
+/** Move `end` back to the best cut marker in [start, end), if one is close enough. */
+function preferReadableCut(msg, start, end) {
+  if (end >= msg.length) return msg.length;
+
+  const window = msg.slice(start, end);
+  for (const marker of CUT_MARKERS) {
+    const idx = window.lastIndexOf(marker);
+    if (idx > 0 && idx >= window.length * MIN_CUT_RATIO) return start + idx + marker.length;
+  }
+  return end;
+}
+
+function isHighSurrogate(code) {
+  return code >= 0xd800 && code <= 0xdbff;
+}
+
+function countStylesIn(styles, start, end) {
+  return styles.filter((s) => s.start < end && s.start + s.len > start).length;
+}
+
+/** The latest style start/end in (start, end) whose chunk holds at most MAX_STYLES styles. */
+function lastFittingStyleBoundary(styles, start, end) {
+  const boundaries = styles
+    .flatMap((s) => [s.start, s.start + s.len])
+    .filter((pos) => pos > start && pos < end)
+    .sort((a, b) => b - a);
+  return boundaries.find((pos) => countStylesIn(styles, start, pos) <= MAX_STYLES) || null;
+}
+
+/** Cut [start, end) out of a formatted message, clipping and re-basing its styles. */
+function sliceMessage({ msg, styles }, start, end) {
+  const clipped = [];
+  for (const s of styles) {
+    const from = Math.max(s.start, start);
+    const to = Math.min(s.start + s.len, end);
+    if (from < to) clipped.push({ start: from - start, len: to - from, st: s.st });
+  }
+  return { msg: msg.slice(start, end), styles: clipped };
+}

@@ -118,17 +118,33 @@ Cài đặt và gỡ cài đặt dùng các file script: `install.sh` / `install
 
 Agent viết Markdown, bridge chuyển sang kiểu chữ của Zalo:
 
-| Bạn viết                                                                    | Zalo hiển thị                                 |
-| ----------------------------------------------------------------------------- | ----------------------------------------------- |
-| `**đậm**` · `*nghiêng*` · `__gạch chân__` · `~~gạch ngang~~` | đậm · nghiêng · gạch chân · gạch ngang |
-| `# Tiêu đề` ở đầu dòng                                               | chữ lớn                                       |
-| `{red:chữ}` · `{orange:…}` · `{yellow:…}` · `{green:…}`        | chữ màu                                       |
+| Bạn viết                                                                   | Zalo hiển thị                              |
+| -------------------------------------------------------------------------- | ------------------------------------------ |
+| `**đậm**` hoặc `__đậm__`                                                   | chữ đậm                                    |
+| `*nghiêng*` hoặc `_nghiêng_`                                               | chữ nghiêng                                |
+| `***vừa đậm vừa nghiêng***`                                                | đậm + nghiêng                              |
+| `~~gạch ngang~~`                                                           | gạch ngang                                 |
+| `` `mã` ``                                                                 | chữ đậm (Zalo không có font đơn cách)      |
+| `# Tiêu đề` (mọi cấp) ở đầu dòng                                           | đậm + chữ lớn                              |
+| `> trích dẫn`                                                              | chữ nghiêng                                |
+| `1. mục` hoặc `1) mục`                                                     | số thứ tự đậm + chữ lớn                    |
+| `- mục` hoặc `* mục`, mục con thụt lề                                      | `- mục`, mục con thành `• mục`             |
+| `[chữ](https://…)`                                                         | **chữ** (https://…)                        |
+| `[red]…[/red]` · `[orange]…[/orange]` · `[yellow]…[/yellow]` · `[green]…[/green]` | chữ màu                             |
 
-Ký hiệu phải dính liền với chữ được bọc, nên gạch đầu dòng `* mục` và phép tính
-`2 * 3` được giữ nguyên. Định dạng không kéo qua dòng mới. Chữ trong `` `code` ``
-hoặc khối `` ``` `` giữ nguyên. Zalo không có bảng, link hay khối code, nên
-những phần đó hiện dạng chữ thường. Câu trả lời dài hơn khoảng 4000 ký tự sẽ
-được tách thành nhiều tin.
+Thẻ màu không phân biệt hoa thường và có tên tiếng Việt: `[do]` (đỏ), `[cam]`
+(cam), `[vang]` (vàng), `[xanh]` (xanh lá). Có thể lồng kiểu chữ khác vào trong,
+ví dụ `[red]Tổng: **500.000đ**[/red]`.
+
+Kiểu chữ lồng nhau được, ví dụ `*nghiêng có **đậm** bên trong*`. Ký hiệu phải
+dính liền với chữ được bọc, nên `2 * 3`, `a ** b **`, `snake_case` và
+`my__var__x` được giữ nguyên. Định dạng không kéo qua dòng mới. Với khối
+` ``` `, dấu rào bị bỏ còn nội dung giữ nguyên như đã gõ. Đường kẻ `---` bị bỏ
+và nhiều dòng trống liền nhau gộp thành một. Zalo không có bảng, nên bảng hiện
+dạng chữ thường. Câu trả lời dài được tách thành nhiều tin, mỗi tin nằm trong
+giới hạn của Zalo (2000 ký tự, 40 kiểu chữ, khoảng 3000 byte), ưu tiên cắt ở
+chỗ xuống đoạn hoặc xuống dòng. Tin có @tag người được gửi thành một tin, và
+giữ nguyên chữ gốc nếu việc định dạng làm lệch vị trí tag.
 
 ## Cấu hình
 
