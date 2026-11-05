@@ -240,6 +240,48 @@ class TargetTest(unittest.TestCase):
         self.assertEqual(asyncio.run(a._target("user:55")), ("55", "user"))
 
 
+class SendImageTest(unittest.TestCase):
+    def setUp(self):
+        self.a = adapter.ZaloAdapter(Cfg())
+        self.a._thread_types["g1"] = "group"
+        self._send_result = adapter.SendResult
+        adapter.SendResult = lambda **kw: types.SimpleNamespace(**kw)
+        self.posts = []
+
+        async def fake_post(path, body):
+            self.posts.append((path, body))
+            return {"success": True}
+
+        self.a._post = fake_post
+
+    def tearDown(self):
+        adapter.SendResult = self._send_result
+
+    def test_file_url_is_sent_as_local_path(self):
+        res = asyncio.run(self.a.send_image("g1", "file:///tmp/a%20b.png", caption="hi"))
+        self.assertTrue(res.success)
+        self.assertEqual(self.posts, [("/send-attachment", {
+            "threadId": "g1", "threadType": "group", "path": "/tmp/a b.png", "caption": "hi"})])
+
+    def test_remote_url_is_downloaded_first(self):
+        async def fake_download(url):
+            return "/cache/img.png"
+
+        self.a._download_to_cache = fake_download
+        asyncio.run(self.a.send_image("g1", "https://x/y.png"))
+        self.assertEqual(self.posts[0][1]["path"], "/cache/img.png")
+
+
+class EmptyImageTagTest(unittest.TestCase):
+    def test_leftover_tag_is_removed(self):
+        self.assertEqual(adapter._strip_empty_image_tags("![Ảnh gradient]()\n\nLily gửi ảnh rồi nhé!"),
+                         "Lily gửi ảnh rồi nhé!")
+
+    def test_real_images_and_text_untouched(self):
+        text = "xem ![a](https://x/y.png) nhé"
+        self.assertEqual(adapter._strip_empty_image_tags(text), text)
+
+
 class BridgeEnvTest(unittest.TestCase):
     def test_merge_keeps_other_keys_and_removes_empty(self):
         with tempfile.TemporaryDirectory() as d:

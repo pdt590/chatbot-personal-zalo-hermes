@@ -12,5 +12,7 @@
   "23": "Cfg",
   "24": "ThreadTypeTest",
   "25": "ReplyFieldsTest",
-  "26": "StripLeadingNameTest"
+  "26": "StripLeadingNameTest",
+  "27": "SendImageTest",
+  "28": "EmptyImageTagTest"
 }

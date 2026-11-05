@@ -260,6 +260,16 @@ def _parse_target_ref(target_ref: str):
     return (chat_id, None) if _TARGET_RE.match(str(target_ref or "")) else None
 
 
+# `![caption]()` left behind when the gateway pulls a MEDIA: path out of a
+# markdown image the model wrote as ![caption](MEDIA:/path).
+_EMPTY_IMAGE_RE = re.compile(r"!\[[^\]\n]*\]\(\s*\)")
+
+
+def _strip_empty_image_tags(text: str) -> str:
+    cleaned = _EMPTY_IMAGE_RE.sub("", text or "")
+    return re.sub(r"\n{3,}", "\n\n", cleaned).strip() if cleaned != text else text
+
+
 def _parse_home_channel(raw: str) -> tuple[str, str]:
     """Parse ZALO_HOME_CHANNEL into (chat_id, thread_type).
 
@@ -916,6 +926,7 @@ class ZaloAdapter(BasePlatformAdapter):
     ):
         chat_id, thread_type = await self._target(chat_id, metadata)
         quote = self._quote_for_reply(reply_to, thread_type)
+        content = _strip_empty_image_tags(content)
         # Split long messages.
         chunks = self.truncate_message(content, max_length=self.max_message_length)
         last = None
@@ -955,7 +966,10 @@ class ZaloAdapter(BasePlatformAdapter):
 
     async def send_image(self, chat_id, image_url, caption=None, reply_to=None, metadata=None):
         # The bridge only sends local files; fetch remote images into the cache first.
-        if str(image_url).startswith(("http://", "https://")):
+        if str(image_url).startswith("file://"):
+            from urllib.request import url2pathname
+            image_url = url2pathname(str(image_url)[len("file://"):])
+        elif str(image_url).startswith(("http://", "https://")):
             local = await self._download_to_cache(str(image_url))
             if not local:
                 return SendResult(success=False, error=f"could not download image: {image_url}")
@@ -969,7 +983,11 @@ class ZaloAdapter(BasePlatformAdapter):
         if not self._session or self._session.closed:
             return None
         try:
-            async with self._session.get(url, timeout=aiohttp.ClientTimeout(total=60)) as resp:
+            # aiohttp's default User-Agent is refused by some hosts (Wikimedia: 403).
+            headers = {"User-Agent": "hermes-zalo-plugin (Hermes Agent image fetch)"}
+            async with self._session.get(
+                url, headers=headers, timeout=aiohttp.ClientTimeout(total=60)
+            ) as resp:
                 if resp.status != 200:
                     logger.warning("Zalo: image download failed (%s): %s", resp.status, url)
                     return None
@@ -1747,7 +1765,14 @@ def register(ctx):
             "warnings or key numbers. Links show as 'label (url)'. Tables and "
             "code blocks are shown as plain text, so avoid them. The user likely "
             "writes in Vietnamese; reply in Vietnamese unless they switch. Keep "
-            "replies concise and conversational. You can send images, files, "
-            "stickers, and voice. Messages over ~4000 chars are auto-split."
+            "replies concise and conversational. Messages over ~4000 chars are "
+            "auto-split. You CAN send real images and files into the chat: put "
+            "![short caption](https://…/image.png) in your reply for an image on "
+            "the web (it is downloaded and sent as a photo, not a link), or "
+            "MEDIA:/absolute/path/to/file on its own line for a local file "
+            "(images go out as photos; other files, video and audio as "
+            "attachments). Use one form or the other: never wrap MEDIA: inside "
+            "![…](…). The tag is removed from the visible text. Never say you "
+            "cannot send images."
         ),
     )
