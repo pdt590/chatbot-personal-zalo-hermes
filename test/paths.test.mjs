@@ -80,25 +80,20 @@ test("resolveHermesHome maps a profile name like Hermes does", async () => {
   assert.equal(resolveHermesHome(["-p=work"], {}).dir, path.join(root, "profiles", "work"));
   assert.equal(resolveHermesHome(["--profile", "default"], {}).dir, root);
 
-  const fromEnv = resolveHermesHome([], { HERMES_PROFILE: "work" });
-  assert.equal(fromEnv.source, "env-profile");
-  assert.equal(fromEnv.dir, path.join(root, "profiles", "work"));
   assert.equal(resolveHermesHome([], {}).source, "default");
+  // Environment variables are ignored: only flags pick the target.
+  const env = { HERMES_PROFILE: "work", HERMES_HOME: "/opt/data" };
+  assert.deepEqual(resolveHermesHome([], env), { dir: root, profile: "default", source: "default" });
+  assert.equal(resolveHermesHome(["-p", "work"], env).dir, path.join(root, "profiles", "work"));
 
   assert.throws(() => resolveHermesHome(["--profile", "../etc"], {}), /not a valid Hermes profile name/);
   assert.throws(() => resolveHermesHome(["--profile"], {}), /requires a value/);
   assert.throws(() => resolveHermesHome(["--profile", "a", "--hermes-home", "/x"], {}), /not both/);
 });
 
-test("profiles live under a custom HERMES_HOME root, and --hermes-home names its profile", async () => {
-  const { resolveHermesHome, hermesRoot } = await import("../paths.js");
+test("--hermes-home takes an explicit folder and names its profile", async () => {
+  const { resolveHermesHome } = await import("../paths.js");
   const custom = path.resolve("/opt/data");
-  assert.equal(hermesRoot({ HERMES_HOME: custom }), custom);
-  assert.equal(hermesRoot({ HERMES_HOME: path.join(custom, "profiles", "x") }), custom);
-  assert.equal(
-    resolveHermesHome(["--profile", "work"], { HERMES_HOME: custom }).dir,
-    path.join(custom, "profiles", "work"),
-  );
   const explicit = resolveHermesHome(["--hermes-home", path.join(custom, "profiles", "lily")], {});
   assert.equal(explicit.source, "flag");
   assert.equal(explicit.profile, "lily");
@@ -110,7 +105,6 @@ test("resolveHermesHomes accepts a comma-separated profile list", async () => {
   const many = resolveHermesHomes(["--profile", "default,Work, work,lily"], {});
   assert.deepEqual(many.map((h) => h.dir), [root, path.join(root, "profiles", "work"), path.join(root, "profiles", "lily")]);
   assert.ok(many.every((h) => h.source === "profile"));
-  assert.deepEqual(resolveHermesHomes([], { HERMES_PROFILE: "a,b" }).map((h) => h.profile), ["a", "b"]);
   // A single value behaves exactly like resolveHermesHome.
   assert.deepEqual(resolveHermesHomes(["-p", "work"], {}), [{ dir: path.join(root, "profiles", "work"), profile: "work", source: "profile" }]);
   assert.deepEqual(resolveHermesHomes([], {}).map((h) => h.source), ["default"]);

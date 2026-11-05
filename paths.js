@@ -159,23 +159,9 @@ function platformDefaultHermesHome(env = process.env) {
   return path.join(os.homedir(), ".hermes");
 }
 
-function isInside(child, parent) {
-  const rel = path.relative(parent, child);
-  return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
-}
-
-/**
- * The Hermes root that holds every profile. Same rule as Hermes: HERMES_HOME
- * under the platform default (or unset) → the platform default; a custom
- * `<root>/profiles/<name>` → `<root>`; any other custom HERMES_HOME → itself.
- */
+/** The Hermes root that holds every profile (~/.hermes; %LOCALAPPDATA%\\hermes on Windows). */
 export function hermesRoot(env = process.env) {
-  const native = platformDefaultHermesHome(env);
-  const raw = (env.HERMES_HOME || "").trim();
-  if (!raw) return native;
-  const home = expandUserPath(raw);
-  if (isInside(home, native)) return native;
-  return path.basename(path.dirname(home)) === "profiles" ? path.dirname(path.dirname(home)) : home;
+  return platformDefaultHermesHome(env);
 }
 
 /** Hermes home directory of profile `name`. */
@@ -195,59 +181,41 @@ export function profileNameForHome(dir, env = process.env) {
 // Where setup/uninstall put the Python adapter (and the optional hook):
 //   1) --profile <name> | -p <name>   Hermes profile name (preferred)
 //   2) --hermes-home <path>           explicit directory (advanced)
-//   3) HERMES_PROFILE                 profile name from the environment
-//   4) HERMES_HOME                    directory from the environment
-//   5) default profile                (~/.hermes; used only when it already exists)
-// Returns { dir, profile, source: "profile" | "flag" | "env-profile" | "env" | "default" }.
+//   3) default profile                (~/.hermes; used only when it already exists)
+// Environment variables (HERMES_PROFILE, HERMES_HOME) are deliberately ignored:
+// Hermes sets HERMES_HOME for its own child processes, so honouring it would
+// make the target depend on where the installer happens to be run from.
+// Returns { dir, profile, source: "profile" | "flag" | "default" }.
 export function resolveHermesHome(argv = [], env = process.env) {
+  return resolveHermesHomes(argv, env)[0];
+}
+
+/**
+ * Like resolveHermesHome(), but `--profile` / `-p` may list several
+ * comma-separated profiles (`--profile default,work`). Duplicates are dropped.
+ * Returns a non-empty array of the same objects.
+ */
+export function resolveHermesHomes(argv = [], env = process.env) {
   const named = flagValue(argv, "--profile") ?? flagValue(argv, "-p");
   const flagged = flagValue(argv, "--hermes-home");
   if (named != null && flagged != null) {
     throw new Error("use either --profile or --hermes-home, not both");
   }
-  if (named != null) {
-    const profile = normalizeProfileName(named);
-    return { dir: profileHome(profile, env), profile, source: "profile" };
-  }
   if (flagged != null) {
     const dir = expandUserPath(flagged);
-    return { dir, profile: profileNameForHome(dir, env), source: "flag" };
+    return [{ dir, profile: profileNameForHome(dir, env), source: "flag" }];
   }
-  const envProfile = (env.HERMES_PROFILE || "").trim();
-  if (envProfile) {
-    const profile = normalizeProfileName(envProfile);
-    return { dir: profileHome(profile, env), profile, source: "env-profile" };
+  if (named == null) {
+    return [{ dir: hermesRoot(env), profile: "default", source: "default" }];
   }
-  const envHome = (env.HERMES_HOME || "").trim();
-  if (envHome) {
-    const dir = expandUserPath(envHome);
-    return { dir, profile: profileNameForHome(dir, env), source: "env" };
-  }
-  return { dir: platformDefaultHermesHome(env), profile: "default", source: "default" };
-}
-
-/**
- * Like resolveHermesHome(), but `--profile` / `-p` / HERMES_PROFILE may list
- * several comma-separated profiles (`--profile default,work`). Duplicates are
- * dropped. Returns a non-empty array of the same objects.
- */
-export function resolveHermesHomes(argv = [], env = process.env) {
-  const named = flagValue(argv, "--profile") ?? flagValue(argv, "-p");
-  const envProfile = (env.HERMES_PROFILE || "").trim();
-  const list = named ?? (flagValue(argv, "--hermes-home") == null ? envProfile : "");
-  if (!list.includes(",")) return [resolveHermesHome(argv, env)];
-  if (named != null && flagValue(argv, "--hermes-home") != null) {
-    throw new Error("use either --profile or --hermes-home, not both");
-  }
-  const source = named != null ? "profile" : "env-profile";
   const seen = new Set();
   const out = [];
-  for (const part of list.split(",")) {
-    if (!part.trim()) continue;
+  for (const part of named.split(",")) {
+    if (named.includes(",") && !part.trim()) continue;
     const profile = normalizeProfileName(part);
     if (seen.has(profile)) continue;
     seen.add(profile);
-    out.push({ dir: profileHome(profile, env), profile, source });
+    out.push({ dir: profileHome(profile, env), profile, source: "profile" });
   }
   if (!out.length) throw new Error("profile name cannot be empty");
   return out;
@@ -258,8 +226,6 @@ export function hermesHomeSourceLabel(home) {
   return {
     profile: `--profile ${home.profile}`,
     flag: "--hermes-home",
-    "env-profile": `HERMES_PROFILE=${home.profile}`,
-    env: "HERMES_HOME",
     default: "default profile",
   }[home.source] || home.source;
 }

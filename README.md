@@ -102,9 +102,7 @@ The target comes from the first of these that is set:
 | - | -------------------------------- | ---------------------------------------- | ------------------------------------------------------------- |
 | 1 | `--profile <name>` / `-p <name>` | `--profile work`, `-p=work`              | Recommended.                                                  |
 | 2 | `--hermes-home <path>`           | `--hermes-home /srv/hermes/work`         | Explicit folder. Cannot be combined with `--profile`.         |
-| 3 | `HERMES_PROFILE` env var         | `HERMES_PROFILE=work node bin/cli.mjs setup`       | Same as `--profile`.                                          |
-| 4 | `HERMES_HOME` env var            | `HERMES_HOME=/srv/hermes node bin/cli.mjs setup`   | Explicit folder.                                              |
-| 5 | nothing                          | `node bin/cli.mjs setup`                           | The `default` profile, **only if its folder already exists**. |
+| 3 | nothing                          | `node bin/cli.mjs setup`                 | The `default` profile, **only if its folder already exists**. |
 
 Rules:
 
@@ -116,9 +114,11 @@ Rules:
   service or writes any file.
 - **The default profile is never created.** If `~/.hermes` does not exist, the
   adapter step is skipped with a warning; the bridge itself still works.
-- An explicit folder (`--hermes-home` / `HERMES_HOME`) is created if missing.
-- **Custom Hermes root:** when `HERMES_HOME` points outside `~/.hermes` (e.g.
-  `/opt/data` in Docker), `--profile <name>` resolves to `$HERMES_HOME/profiles/<name>`.
+- An explicit folder (`--hermes-home`) is created if missing.
+- **Environment variables are ignored.** `HERMES_PROFILE` and `HERMES_HOME` do not
+  change the target (Hermes sets `HERMES_HOME` for its own child processes); for a
+  Hermes root outside `~/.hermes` (e.g. `/opt/data` in Docker) use
+  `--hermes-home /opt/data/profiles/<name>`.
 - The adapter step prints what was picked, e.g.
   `Hermes profile: work → /home/me/.hermes/profiles/work (--profile work)`.
 
@@ -147,8 +147,6 @@ Values can be given as `--option value` or `--option=value`. Notes:
 
 | Variable                                                 | Effect                                                                                          |
 | -------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `HERMES_PROFILE`                                         | Profile name, same as `--profile` (lower priority than the flags).                              |
-| `HERMES_HOME`                                            | Hermes folder, same as `--hermes-home`. With `--profile`, the root that holds `profiles/`.      |
 | `ZALO_DATA_DIR`                                          | Bridge data folder (login, `bridge.env`, logs). Default `~/.hermes-zalo`.                       |
 | `ZALO_BRIDGE_ENV`, `ZALO_CREDENTIALS_PATH`, `ZALO_QR_PATH`, `ZALO_CLIMSG_DIR`, `ZALO_LOG_DIR` | Override single bridge files or folders.                   |
 | `ZALO_PLUGIN_PORT`                                       | Only changes the URL printed at the end; the bridge reads its port from `bridge.env`.           |
@@ -167,9 +165,6 @@ node bin/cli.mjs setup
 hermes profile create work                    # only if it does not exist yet
 node bin/cli.mjs setup --profile work
 hermes -p work gateway setup
-
-# Same, via environment variable
-HERMES_PROFILE=work node bin/cli.mjs setup
 
 # Add the adapter to a second profile (bridge and login already set up)
 node bin/cli.mjs setup --service-only --profile lily
@@ -190,8 +185,8 @@ node bin/cli.mjs start
 # Keep bridge data somewhere else
 ZALO_DATA_DIR=/srv/zalo node bin/cli.mjs setup --profile work
 
-# Docker / custom root: profiles live under $HERMES_HOME/profiles
-HERMES_HOME=/opt/data node bin/cli.mjs setup --profile work  # → /opt/data/profiles/work
+# Docker / custom Hermes root: point at the profile folder
+node bin/cli.mjs setup --hermes-home /opt/data/profiles/work
 
 # Explicit folder that is not a standard profile
 node bin/cli.mjs setup --hermes-home ~/hermes-test
@@ -199,7 +194,7 @@ node bin/cli.mjs setup --hermes-home ~/hermes-test
 
 ```powershell
 # Windows (PowerShell)
-$env:HERMES_PROFILE = "work"; node bin/cli.mjs setup
+node bin/cli.mjs setup --profile work
 ```
 
 ### What gets installed where
@@ -243,7 +238,6 @@ Run it from the git checkout, on any OS: `node bin/cli.mjs uninstall [options]`.
 | ---------------------------------------- | ------------ | ----------------------------------------------------------------------------------- |
 | `-p`, `--profile`                        | profile name(s) | Remove the adapter and hook from these profiles (comma-separated). Same rules as for install. |
 | `--hermes-home`                          | folder       | Remove them from this folder instead.                                               |
-| `HERMES_PROFILE` / `HERMES_HOME`         | env vars     | Same as above, lower priority than the flags.                                       |
 | `--purge`                                | —            | Also delete the saved Zalo login (`credentials.json`). The next install shows a QR. |
 | `ZALO_DATA_DIR`, `ZALO_CREDENTIALS_PATH` | env vars     | Where to find the login if you moved it.                |
 
@@ -274,7 +268,6 @@ node bin/cli.mjs setup --service-only --profile lily
 ```bash
 node bin/cli.mjs uninstall                      # default profile, keep the login
 node bin/cli.mjs uninstall --profile work       # named profile
-HERMES_PROFILE=work node bin/cli.mjs uninstall  # same, via environment
 node bin/cli.mjs uninstall --profile work --purge  # also log out (delete credentials)
 
 # Remove everything

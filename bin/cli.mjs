@@ -91,12 +91,11 @@ function help() {
 Commands:
   setup        Log in (QR) if needed and install a background auto-start service
                -p, --profile <names>  Hermes profile(s) to install the adapter into, comma-separated
-                                      (default = ~/.hermes, <name> = ~/.hermes/profiles/<name>;
-                                      also reads HERMES_PROFILE)
+                                      (default = ~/.hermes, <name> = ~/.hermes/profiles/<name>)
                --service-only         only (re)install the service + adapter (after an update)
                --no-service           skip the background service
                --relogin              force a new QR scan
-               --hermes-home <dir>    advanced: explicit Hermes home (also reads HERMES_HOME)
+               --hermes-home <dir>    advanced: explicit Hermes home directory
                --with-hook            also install the tool access hook
                --hook-owner <uid>     hook + owner uid(s) in the profile .env
                --hook-mode <m>        owner mode: read | full-dm | full

@@ -70,8 +70,7 @@ try {
 // A named profile is created by Hermes (it seeds config, .env, skills…); a
 // missing one is almost always a typo, so stop instead of inventing it.
 for (const home of HERMES_HOMES) {
-  if ((home.source === "profile" || home.source === "env-profile")
-      && home.profile !== "default" && !fs.existsSync(home.dir)) {
+  if (home.source === "profile" && home.profile !== "default" && !fs.existsSync(home.dir)) {
     die(`Hermes profile '${home.profile}' not found at ${home.dir}.\n` +
       `  Create it first:  hermes profile create ${home.profile}\n` +
       "  (list existing ones with: hermes profile list)");
