@@ -106,6 +106,7 @@ Commands:
   status       Show bridge health and the data directory
   uninstall    Remove the service, adapter and tool access hook (--purge also deletes credentials)
                -p, --profile <names>  remove the adapter and hook from these Hermes profiles
+               --hook-only            remove only the tool access hook (keep service, adapter, login)
   help         Show this message
 
 Data lives in ~/.hermes-zalo/ (override with ZALO_DATA_DIR). Bridge settings

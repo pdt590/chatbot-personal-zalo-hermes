@@ -36,6 +36,22 @@ test("disablePluginInConfig: removes from block and inline lists", () => {
   assert.deepEqual(inline, { text: "plugins:\n  enabled: [a, b]\n", removed: true });
 });
 
+test("disablePluginInConfig: removes an emptied enabled: and plugins:", () => {
+  // Round trip of what setup writes leaves the file as it was.
+  for (const cfg of ["model: x\n", "model: x", ""]) {
+    const added = enablePluginInConfig(cfg).text;
+    assert.equal(disablePluginInConfig(added).text, cfg.endsWith("\n") || !cfg ? cfg : cfg + "\n");
+  }
+  assert.equal(disablePluginInConfig("plugins:\n  enabled: [zalo-platform]\nmodel: x\n").text, "model: x\n");
+  // plugins: stays while it has other keys.
+  assert.equal(
+    disablePluginInConfig("plugins:\n  enabled:\n    - zalo-platform\n  disabled: [a]\nmodel: x\n").text,
+    "plugins:\n  disabled: [a]\nmodel: x\n",
+  );
+  // Blank line between two remaining blocks is kept.
+  assert.equal(disablePluginInConfig("a: 1\n\nplugins:\n  enabled:\n    - zalo-platform\n\nb: 2\n").text, "a: 1\n\nb: 2\n");
+});
+
 test("disablePluginInConfig: no-op when absent", () => {
   for (const cfg of ["", "model: x\n", "plugins:\n  enabled:\n    - other\n", "plugins:\n  enabled: [a]\n"]) {
     assert.deepEqual(disablePluginInConfig(cfg), { text: cfg, removed: false });

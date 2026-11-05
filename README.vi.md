@@ -19,21 +19,28 @@ và Windows.
 ## Mục lục
 
 1. [Bắt đầu nhanh](#bắt-đầu-nhanh)
-2. [Cài đặt](#cài-đặt)
-   - [Các cách chạy trình cài đặt](#các-cách-chạy-trình-cài-đặt)
+2. [Cách hoạt động](#cách-hoạt-động)
+3. [Cài đặt](#cài-đặt)
+   - [Chạy trình cài đặt](#chạy-trình-cài-đặt)
    - [Trình cài đặt làm gì](#trình-cài-đặt-làm-gì)
    - [Chọn profile Hermes](#chọn-profile-hermes)
    - [Tuỳ chọn cài đặt](#tuỳ-chọn-cài-đặt)
    - [Biến môi trường trình cài đặt đọc](#biến-môi-trường-trình-cài-đặt-đọc)
    - [Ví dụ cài đặt](#ví-dụ-cài-đặt)
    - [Vị trí các thành phần đã cài](#vị-trí-các-thành-phần-đã-cài)
-3. [Cập nhật](#cập-nhật)
-4. [Gỡ cài đặt](#gỡ-cài-đặt)
-5. [Cách hoạt động](#cách-hoạt-động)
-6. [Lệnh CLI](#lệnh-cli)
-7. [Sử dụng](#sử-dụng)
-8. [Cấu hình](#cấu-hình)
-9. [Bảo mật](#bảo-mật)
+4. [Cấu hình](#cấu-hình)
+5. [Bảo mật](#bảo-mật)
+   - [Hook kiểm soát tool (tuỳ chọn)](#hook-kiểm-soát-tool-tuỳ-chọn)
+   - [Toàn quyền cho chủ bot trong chat 1-1](#toàn-quyền-cho-chủ-bot-trong-chat-1-1)
+6. [Sử dụng](#sử-dụng)
+   - [Định dạng tin nhắn](#định-dạng-tin-nhắn)
+7. [Cập nhật](#cập-nhật)
+8. [Gỡ cài đặt](#gỡ-cài-đặt)
+   - [Lệnh](#lệnh)
+   - [Tuỳ chọn gỡ cài đặt](#tuỳ-chọn-gỡ-cài-đặt)
+   - [Gỡ gì và giữ gì](#gỡ-gì-và-giữ-gì)
+   - [Ví dụ gỡ cài đặt](#ví-dụ-gỡ-cài-đặt)
+9. [Lệnh CLI](#lệnh-cli)
 10. [HTTP API](#http-api)
 11. [Xử lý sự cố](#xử-lý-sự-cố)
 12. [Phát triển](#phát-triển)
@@ -59,6 +66,21 @@ hermes gateway                       # bắt đầu chat
 ```
 
 Phần còn lại giải thích từng tuỳ chọn. Nếu mặc định đã phù hợp thì bạn đã xong.
+
+## Cách hoạt động
+
+```mermaid
+flowchart LR
+  Z[Máy chủ Zalo] <-- "WebSocket vào<br/>HTTPS ra" --> B["Bridge (Node + zca-js)<br/>service chạy nền"]
+  B -- "SSE  GET /events" --> A["Adapter Hermes (Python)<br/>~/.hermes[/profiles/name]/plugins/zalo"]
+  A -- "REST  POST /send, /api/…" --> B
+  A <--> H[Hermes gateway + agent]
+```
+
+| Thành phần                                        | Chạy dưới dạng                                                                          | Nhiệm vụ                                                                                                                 |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| **Bridge** (`server.js`, `zaloClient.js`) | systemd user unit (Linux), launchd agent (macOS), Scheduled Task khi đăng nhập (Windows) | Giữ phiên Zalo, đẩy sự kiện đến qua SSE, cung cấp REST cho mọi hàm zca-js, có chính sách quyền kiểm soát. |
+| **Adapter** (`hermes-plugin/`)              | Plugin `zalo-platform` bên trong `hermes gateway`                                      | Chuyển sự kiện thành tin nhắn Hermes, tải media, quyết định trả lời chat nào, gửi phản hồi qua bridge.      |
 
 ## Cài đặt
 
@@ -213,137 +235,6 @@ node bin/cli.mjs setup --profile work
 Mỗi máy có **một bridge** (một tài khoản Zalo), dùng chung cho mọi profile; mỗi
 profile có **bản adapter riêng**.
 
-## Cập nhật
-
-Đăng nhập và cấu hình được giữ nguyên.
-
-```bash
-git pull && npm install
-node bin/cli.mjs setup --service-only --profile <name>[,<name>…]  # mọi profile có adapter
-hermes -p <name> gateway restart                # profile mặc định: hermes gateway restart
-```
-
-Bỏ `--profile` nếu dùng profile mặc định. Nếu lúc cài có dùng biến đường dẫn
-`ZALO_*`, hãy đặt lại chúng ở đây.
-
-## Gỡ cài đặt
-
-### Lệnh
-
-Chạy từ bản git clone, trên mọi hệ điều hành: `node bin/cli.mjs uninstall [tuỳ chọn]`.
-
-### Tuỳ chọn gỡ cài đặt
-
-| Tuỳ chọn / biến                           | Giá trị           | Tác dụng                                                                                             |
-| -------------------------------------------- | ------------------- | ------------------------------------------------------------------------------------------------------ |
-| `-p`, `--profile`                        | tên profile        | Gỡ adapter và hook khỏi các profile này (cách nhau bằng dấu phẩy). Quy tắc giống lúc cài. |
-| `--hermes-home`                            | thư mục           | Gỡ khỏi thư mục này.                                                                              |
-| `--purge`                                  | —                  | Xoá cả đăng nhập Zalo đã lưu (`credentials.json`). Lần cài sau sẽ hiện QR.               |
-| `ZALO_DATA_DIR`, `ZALO_CREDENTIALS_PATH` | biến môi trường | Nơi tìm đăng nhập nếu bạn đã đổi vị trí.                                                  |
-
-Khác với lúc cài, profile không tồn tại không phải lỗi: trình gỡ báo không có gì
-để gỡ ở đó rồi làm tiếp.
-
-### Gỡ gì và giữ gì
-
-| Bị gỡ                                                                    | Được giữ                                                              |
-| -------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| Service chạy nền (dừng và huỷ đăng ký)                             | Mã bridge (bản git clone)                                               |
-| `<profile>/plugins/zalo/`                                                | `~/.hermes-zalo/` (`bridge.env`, log, cache)                          |
-| `zalo-platform` trong `plugins.enabled` của `<profile>/config.yaml` | Đăng nhập Zalo, trừ khi có `--purge`                               |
-| File hook và mục `hooks.pre_tool_call` của nó                        | Các dòng `ZALO_*` trong `<profile>/.env` (dùng lại khi cài lại) |
-|                                                                            | `platform_toolsets.zalo` và phần còn lại của `config.yaml`       |
-
-Gỡ cài đặt luôn gỡ **service** cùng với adapter của profile được chọn. Muốn gỡ Zalo
-khỏi một profile nhưng giữ ở profile khác, hãy gỡ rồi cài lại cho profile cần giữ:
-
-```bash
-node bin/cli.mjs uninstall --profile work
-node bin/cli.mjs setup --service-only --profile lily
-```
-
-### Ví dụ gỡ cài đặt
-
-```bash
-node bin/cli.mjs uninstall                      # profile mặc định, giữ đăng nhập
-node bin/cli.mjs uninstall --profile work       # profile có tên
-node bin/cli.mjs uninstall --profile work --purge  # đăng xuất luôn (xoá credentials)
-
-# Gỡ sạch hoàn toàn
-node bin/cli.mjs uninstall --profile work,lily --purge  # mọi profile từng có adapter
-rm -rf ~/.hermes-zalo                           # dữ liệu bridge
-rm -rf /đường/dẫn/tới/bản/git/clone            # mã bridge
-hermes -p work gateway restart
-```
-
-Sau đó khởi động lại `hermes gateway` của từng profile bị ảnh hưởng.
-
-## Cách hoạt động
-
-```mermaid
-flowchart LR
-  Z[Máy chủ Zalo] <-- "WebSocket vào<br/>HTTPS ra" --> B["Bridge (Node + zca-js)<br/>service chạy nền"]
-  B -- "SSE  GET /events" --> A["Adapter Hermes (Python)<br/>~/.hermes[/profiles/name]/plugins/zalo"]
-  A -- "REST  POST /send, /api/…" --> B
-  A <--> H[Hermes gateway + agent]
-```
-
-| Thành phần                                        | Chạy dưới dạng                                                                          | Nhiệm vụ                                                                                                                 |
-| --------------------------------------------------- | ------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| **Bridge** (`server.js`, `zaloClient.js`) | systemd user unit (Linux), launchd agent (macOS), Scheduled Task khi đăng nhập (Windows) | Giữ phiên Zalo, đẩy sự kiện đến qua SSE, cung cấp REST cho mọi hàm zca-js, có chính sách quyền kiểm soát. |
-| **Adapter** (`hermes-plugin/`)              | Plugin `zalo-platform` bên trong `hermes gateway`                                      | Chuyển sự kiện thành tin nhắn Hermes, tải media, quyết định trả lời chat nào, gửi phản hồi qua bridge.      |
-
-## Lệnh CLI
-
-Chạy từ thư mục git clone: `node bin/cli.mjs <lệnh>`.
-
-| Lệnh                      | Tác dụng                                                                                  |
-| -------------------------- | ------------------------------------------------------------------------------------------- |
-| `setup [tuỳ chọn]`     | Trình cài đặt, xem [Tuỳ chọn cài đặt](#tuỳ-chọn-cài-đặt).                      |
-| `uninstall [tuỳ chọn]` | Trình gỡ cài đặt, xem [Tuỳ chọn gỡ cài đặt](#tuỳ-chọn-gỡ-cài-đặt).          |
-| `status`                 | Trạng thái service, sức khoẻ bridge, tài khoản đăng nhập, đường dẫn dữ liệu. |
-| `login [--force]`        | Đăng nhập QR. Bridge đang chạy tự nhận phiên mới.                                  |
-| `restart`                | Khởi động lại (hoặc khởi động) service. Cần sau khi sửa `bridge.env`.           |
-| `stop`                   | Dừng service; service vẫn được cài.                                                   |
-| `start`                  | Chạy bridge ở foreground.                                                                 |
-| `help`                   | Liệt kê lệnh và tuỳ chọn.                                                             |
-
-## Sử dụng
-
-<p align="center">
-  <img src="./assets/zalo-chat.svg" alt="Chat với Hermes agent từ Zalo" width="300">
-</p>
-
-- **Chat riêng:** nhắn tin cho tài khoản Zalo của bot.
-- **Nhóm:** mặc định (`ZALO_GROUP_MODE=mention`) bot chỉ trả lời khi được @nhắc tên,
-  được trả lời tin nhắn, hoặc khi tin nhắn bắt đầu bằng tên hiển thị của bot. Nếu
-  không chọn nhóm nào trong wizard, bot không tham gia nhóm nào.
-- **Thống kê & tóm tắt nhóm:** thêm `zalo_groups` vào `platform_toolsets.zalo` trong
-  `config.yaml` để agent có `zalo_group_stats` và `zalo_group_messages`. Chỉ có các
-  tin nhắn nhận được khi bridge đang chạy (`ZALO_GROUP_LOG_DAYS`).
-- **Tìm ID:** đặt `ZALO_LOG_IDS=true`, gửi một tin nhắn, đọc dòng `uid=… threadId=…`
-  trong log gateway. `hermes gateway setup` tìm danh bạ theo tên nên hiếm khi cần ID.
-
-### Định dạng tin nhắn
-
-Agent viết Markdown; bridge chuyển thành kiểu chữ của Zalo.
-
-| Markdown                                                        | Zalo hiển thị                                             |
-| --------------------------------------------------------------- | ----------------------------------------------------------- |
-| `**đậm**`, `*nghiêng*`, `***cả hai***`, `~~gạch~~` | kiểu tương ứng                                          |
-| `` `code` ``                                                    | đậm (Zalo không có font monospace)                      |
-| `# Tiêu đề` (mọi cấp)                                    | đậm + chữ lớn                                           |
-| `> trích dẫn`                                               | nghiêng                                                    |
-| `1. mục`                                                     | số in đậm + chữ lớn                                    |
-| `- mục`, mục con                                            | `- mục`, mục con thành `• mục`                     |
-| `[nhãn](https://…)`                                         | **nhãn** (https://…)                                |
-| `[red]…[/red]`, `[orange]`, `[yellow]`, `[green]`      | chữ màu (tên khác: `do`, `cam`, `vang`, `xanh`) |
-
-Ký hiệu phải dính sát chữ được bọc (`2 * 3`, `snake_case` giữ nguyên) và không vượt
-qua dấu xuống dòng. Khối code bỏ hàng rào `` ``` ``, `---` bị bỏ, bảng hiển thị
-dạng văn bản thường. Câu trả lời dài được tách ở chỗ ngắt đoạn/dòng để vừa giới hạn
-của Zalo (2000 ký tự, 40 kiểu chữ).
-
 ## Cấu hình
 
 `hermes gateway setup` (`hermes -p <name> gateway setup` với profile có tên) ghi cả
@@ -409,6 +300,14 @@ Trình cài đặt chép script vào `<profile>/agent-hooks/`, đăng ký nó tr
 lại các biến `ZALO_HOOK_*`). Nếu không đặt chủ bot, mọi người dùng Zalo đều bị chặn
 mọi tool.
 
+Chỉ gỡ hook mà vẫn giữ Zalo chạy:
+
+```bash
+node bin/cli.mjs uninstall --hook-only --profile <name>   # rồi: hermes -p <name> gateway restart
+```
+
+Các lần chạy `setup` sau sẽ không cài lại hook, trừ khi bạn truyền lại một tuỳ chọn hook.
+
 Cấu hình đặt trong `<profile>/.env` (hoặc tham số dòng lệnh, được ưu tiên hơn).
 Danh sách cách nhau bằng dấu phẩy. `$P` dưới đây là thư mục profile.
 
@@ -470,6 +369,124 @@ bị chặn. `<name>` là profile Hermes và `P` là thư mục của nó, vd.
    ```
 4. Khởi động lại gateway, kiểm tra `grep "owner uid(s) configured" ~/.hermes/logs/gateway.log`,
    rồi chủ bot gửi `/new` cho bot (phiên cũ vẫn giữ tool cũ).
+
+## Sử dụng
+
+<p align="center">
+  <img src="./assets/zalo-chat.svg" alt="Chat với Hermes agent từ Zalo" width="300">
+</p>
+
+- **Chat riêng:** nhắn tin cho tài khoản Zalo của bot.
+- **Nhóm:** mặc định (`ZALO_GROUP_MODE=mention`) bot chỉ trả lời khi được @nhắc tên,
+  được trả lời tin nhắn, hoặc khi tin nhắn bắt đầu bằng tên hiển thị của bot. Nếu
+  không chọn nhóm nào trong wizard, bot không tham gia nhóm nào.
+- **Thống kê & tóm tắt nhóm:** thêm `zalo_groups` vào `platform_toolsets.zalo` trong
+  `config.yaml` để agent có `zalo_group_stats` và `zalo_group_messages`. Chỉ có các
+  tin nhắn nhận được khi bridge đang chạy (`ZALO_GROUP_LOG_DAYS`).
+- **Tìm ID:** đặt `ZALO_LOG_IDS=true`, gửi một tin nhắn, đọc dòng `uid=… threadId=…`
+  trong log gateway. `hermes gateway setup` tìm danh bạ theo tên nên hiếm khi cần ID.
+
+### Định dạng tin nhắn
+
+Agent viết Markdown; bridge chuyển thành kiểu chữ của Zalo.
+
+| Markdown                                                        | Zalo hiển thị                                             |
+| --------------------------------------------------------------- | ----------------------------------------------------------- |
+| `**đậm**`, `*nghiêng*`, `***cả hai***`, `~~gạch~~` | kiểu tương ứng                                          |
+| `` `code` ``                                                    | đậm (Zalo không có font monospace)                      |
+| `# Tiêu đề` (mọi cấp)                                    | đậm + chữ lớn                                           |
+| `> trích dẫn`                                               | nghiêng                                                    |
+| `1. mục`                                                     | số in đậm + chữ lớn                                    |
+| `- mục`, mục con                                            | `- mục`, mục con thành `• mục`                     |
+| `[nhãn](https://…)`                                         | **nhãn** (https://…)                                |
+| `[red]…[/red]`, `[orange]`, `[yellow]`, `[green]`      | chữ màu (tên khác: `do`, `cam`, `vang`, `xanh`) |
+
+Ký hiệu phải dính sát chữ được bọc (`2 * 3`, `snake_case` giữ nguyên) và không vượt
+qua dấu xuống dòng. Khối code bỏ hàng rào `` ``` ``, `---` bị bỏ, bảng hiển thị
+dạng văn bản thường. Câu trả lời dài được tách ở chỗ ngắt đoạn/dòng để vừa giới hạn
+của Zalo (2000 ký tự, 40 kiểu chữ).
+
+## Cập nhật
+
+Đăng nhập và cấu hình được giữ nguyên.
+
+```bash
+git pull && npm install
+node bin/cli.mjs setup --service-only --profile <name>[,<name>…]  # mọi profile có adapter
+hermes -p <name> gateway restart                # profile mặc định: hermes gateway restart
+```
+
+Bỏ `--profile` nếu dùng profile mặc định. Nếu lúc cài có dùng biến đường dẫn
+`ZALO_*`, hãy đặt lại chúng ở đây.
+
+## Gỡ cài đặt
+
+### Lệnh
+
+Chạy từ bản git clone, trên mọi hệ điều hành: `node bin/cli.mjs uninstall [tuỳ chọn]`.
+
+### Tuỳ chọn gỡ cài đặt
+
+| Tuỳ chọn / biến                           | Giá trị           | Tác dụng                                                                                             |
+| -------------------------------------------- | ------------------- | ------------------------------------------------------------------------------------------------------ |
+| `-p`, `--profile`                        | tên profile        | Gỡ adapter và hook khỏi các profile này (cách nhau bằng dấu phẩy). Quy tắc giống lúc cài. |
+| `--hermes-home`                            | thư mục           | Gỡ khỏi thư mục này.                                                                              |
+| `--purge`                                  | —                  | Xoá cả đăng nhập Zalo đã lưu (`credentials.json`). Lần cài sau sẽ hiện QR.               |
+| `--hook-only`                              | —                  | **Chỉ** gỡ hook kiểm soát tool; giữ service, adapter và đăng nhập. Không dùng chung với `--purge`. |
+| `ZALO_DATA_DIR`, `ZALO_CREDENTIALS_PATH` | biến môi trường | Nơi tìm đăng nhập nếu bạn đã đổi vị trí.                                                  |
+
+Khác với lúc cài, profile không tồn tại không phải lỗi: trình gỡ báo không có gì
+để gỡ ở đó rồi làm tiếp.
+
+### Gỡ gì và giữ gì
+
+| Bị gỡ                                                                    | Được giữ                                                              |
+| -------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| Service chạy nền (dừng và huỷ đăng ký)                             | Mã bridge (bản git clone)                                               |
+| `<profile>/plugins/zalo/`                                                | `~/.hermes-zalo/` (`bridge.env`, log, cache)                          |
+| `zalo-platform` trong `plugins.enabled` của `<profile>/config.yaml` | Đăng nhập Zalo, trừ khi có `--purge`                               |
+| File hook và mục `hooks.pre_tool_call` của nó                        | Các dòng `ZALO_*` trong `<profile>/.env` (dùng lại khi cài lại) |
+|                                                                            | `platform_toolsets.zalo` và phần còn lại của `config.yaml`       |
+
+Gỡ cài đặt luôn gỡ **service** cùng với adapter của profile được chọn. Muốn gỡ Zalo
+khỏi một profile nhưng giữ ở profile khác, hãy gỡ rồi cài lại cho profile cần giữ:
+
+```bash
+node bin/cli.mjs uninstall --profile work
+node bin/cli.mjs setup --service-only --profile lily
+```
+
+### Ví dụ gỡ cài đặt
+
+```bash
+node bin/cli.mjs uninstall                      # profile mặc định, giữ đăng nhập
+node bin/cli.mjs uninstall --profile work       # profile có tên
+node bin/cli.mjs uninstall --profile work --purge  # đăng xuất luôn (xoá credentials)
+node bin/cli.mjs uninstall --profile work --hook-only  # chỉ gỡ hook kiểm soát tool
+
+# Gỡ sạch hoàn toàn
+node bin/cli.mjs uninstall --profile work,lily --purge  # mọi profile từng có adapter
+rm -rf ~/.hermes-zalo                           # dữ liệu bridge
+rm -rf /đường/dẫn/tới/bản/git/clone            # mã bridge
+hermes -p work gateway restart
+```
+
+Sau đó khởi động lại `hermes gateway` của từng profile bị ảnh hưởng.
+
+## Lệnh CLI
+
+Chạy từ thư mục git clone: `node bin/cli.mjs <lệnh>`.
+
+| Lệnh                      | Tác dụng                                                                                  |
+| -------------------------- | ------------------------------------------------------------------------------------------- |
+| `setup [tuỳ chọn]`     | Trình cài đặt, xem [Tuỳ chọn cài đặt](#tuỳ-chọn-cài-đặt).                      |
+| `uninstall [tuỳ chọn]` | Trình gỡ cài đặt, xem [Tuỳ chọn gỡ cài đặt](#tuỳ-chọn-gỡ-cài-đặt).          |
+| `status`                 | Trạng thái service, sức khoẻ bridge, tài khoản đăng nhập, đường dẫn dữ liệu. |
+| `login [--force]`        | Đăng nhập QR. Bridge đang chạy tự nhận phiên mới.                                  |
+| `restart`                | Khởi động lại (hoặc khởi động) service. Cần sau khi sửa `bridge.env`.           |
+| `stop`                   | Dừng service; service vẫn được cài.                                                   |
+| `start`                  | Chạy bridge ở foreground.                                                                 |
+| `help`                   | Liệt kê lệnh và tuỳ chọn.                                                             |
 
 ## HTTP API
 

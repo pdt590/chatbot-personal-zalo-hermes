@@ -48,10 +48,14 @@ test("removePreToolHook: removes only our entry", () => {
   assert.equal(removePreToolHook(r.text).removed, false);
 });
 
-test("removePreToolHook: an emptied list becomes []", () => {
+test("removePreToolHook: an emptied list and hooks: are removed", () => {
   const added = addPreToolHook("model: x\n", CMD).text;
-  const r = removePreToolHook(added);
-  assert.equal(r.text, "model: x\nhooks:\n  pre_tool_call: []\n");
+  assert.equal(removePreToolHook(added).text, "model: x\n");
+});
+
+test("removePreToolHook: keeps hooks: while other hook types remain", () => {
+  const cfg = `hooks:\n  pre_tool_call:\n${ENTRY}\n  post_tool_call:\n    - command: "/x/post.sh"\nmodel: x\n`;
+  assert.equal(removePreToolHook(cfg).text, `hooks:\n  post_tool_call:\n    - command: "/x/post.sh"\nmodel: x\n`);
 });
 
 test("setEnvVar: replaces or appends", () => {

@@ -109,6 +109,37 @@ function blockEnd(lines, keyIdx) {
   return end;
 }
 
+// `key:` with no value, or an empty value ([] {} null ~), optionally commented.
+const EMPTY_KEY_RE = /^\s*[A-Za-z0-9_.-]+:\s*(\[\s*\]|\{\s*\}|null|~)?\s*(#.*)?$/;
+
+/**
+ * Delete the key at `keyIdx` when nothing is left under it, then its parent if
+ * that is now empty too, and so on up to the top level. A removed top-level key
+ * also takes the blank lines that separated it from the previous block, when
+ * nothing (or another blank line) follows. Mutates `lines`.
+ */
+function pruneEmptyKeys(lines, keyIdx) {
+  while (keyIdx >= 0 && keyIdx < lines.length) {
+    if (!EMPTY_KEY_RE.test(lines[keyIdx]) || blockEnd(lines, keyIdx) !== keyIdx + 1) return;
+    const indent = indentOf(lines[keyIdx]);
+    let parent = -1;
+    if (indent > 0) {
+      for (let i = keyIdx - 1; i >= 0; i--) {
+        if (!isBlank(lines[i]) && indentOf(lines[i]) < indent) { parent = i; break; }
+      }
+    }
+    lines.splice(keyIdx, 1);
+    if (indent === 0) {
+      let b = keyIdx;
+      while (b > 0 && !lines[b - 1].trim()) b--;
+      const restBlank = lines.slice(keyIdx).every((l) => !l.trim());
+      if (b < keyIdx && (restBlank || !lines[keyIdx].trim())) lines.splice(b, keyIdx - b);
+      return;
+    }
+    keyIdx = parent;
+  }
+}
+
 function hookEntry(command, indent) {
   const pad = " ".repeat(indent);
   return [
@@ -185,7 +216,8 @@ export function addPreToolHook(cfgText, command) {
 
 /**
  * Remove the `hooks.pre_tool_call` entry that runs zalo-tool-access.py.
- * An emptied list becomes `pre_tool_call: []`; other hooks are untouched.
+ * An emptied `pre_tool_call` (and then an emptied `hooks:`) is removed; other
+ * hooks are untouched.
  *
  * @returns {{ text: string, removed: boolean }}
  */
@@ -207,12 +239,10 @@ export function removePreToolHook(cfgText) {
   }
   lines.splice(start, end - start);
 
-  // Find the pre_tool_call key above the removed item; empty list → [].
+  // The pre_tool_call key above the removed item: drop it (and hooks:) if empty.
   let key = start - 1;
   while (key >= 0 && !/^\s*pre_tool_call:\s*(#.*)?$/.test(lines[key])) key--;
-  if (key >= 0 && blockEnd(lines, key) === key + 1) {
-    lines[key] = lines[key].replace(/pre_tool_call:.*/, "pre_tool_call: []");
-  }
+  pruneEmptyKeys(lines, key);
   return { text: lines.join("\n"), removed: true };
 }
 
@@ -282,7 +312,8 @@ export function enablePluginInConfig(cfgText) {
 }
 
 /**
- * Drop "zalo-platform" from plugins.enabled (inline or block list).
+ * Drop "zalo-platform" from plugins.enabled (inline or block list). An emptied
+ * `enabled:` (and then an emptied `plugins:`) is removed too.
  * Returns { text, removed }.
  */
 export function disablePluginInConfig(cfgText) {
@@ -299,12 +330,14 @@ export function disablePluginInConfig(cfgText) {
     const kept = items.filter((s) => s.replace(/^['"]|['"]$/g, "") !== PLUGIN_NAME);
     if (kept.length === items.length) return { text, removed: false };
     lines[enabledIdx] = `${inline[1]}[${kept.join(", ")}]`;
+    pruneEmptyKeys(lines, enabledIdx);
     return { text: lines.join("\n"), removed: true };
   }
 
   for (let j = enabledIdx + 1; j < lines.length; j++) {
     if (new RegExp(`^\\s*-\\s*['"]?${PLUGIN_NAME}['"]?\\s*$`).test(lines[j])) {
       lines.splice(j, 1);
+      pruneEmptyKeys(lines, enabledIdx);
       return { text: lines.join("\n"), removed: true };
     }
     if (/^\s*-\s/.test(lines[j]) || lines[j].trim() === "") continue;

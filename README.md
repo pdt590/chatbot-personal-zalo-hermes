@@ -18,24 +18,32 @@ Linux and Windows.
 ## Contents
 
 1. [Quick start](#quick-start)
-2. [Install](#install)
-   - [Ways to run the installer](#ways-to-run-the-installer)
+2. [How it works](#how-it-works)
+3. [Install](#install)
+   - [Running the installer](#running-the-installer)
    - [What the installer does](#what-the-installer-does)
    - [Choosing the Hermes profile](#choosing-the-hermes-profile)
    - [Install options](#install-options)
    - [Environment variables read by the installer](#environment-variables-read-by-the-installer)
    - [Install examples](#install-examples)
    - [What gets installed where](#what-gets-installed-where)
-3. [Update](#update)
-4. [Uninstall](#uninstall)
-5. [How it works](#how-it-works)
-6. [CLI commands](#cli-commands)
-7. [Usage](#usage)
-8. [Configuration](#configuration)
-9. [Security](#security)
+4. [Configuration](#configuration)
+5. [Security](#security)
+   - [Tool access hook (optional)](#tool-access-hook-optional)
+   - [Full owner access from a 1-1 chat](#full-owner-access-from-a-1-1-chat)
+6. [Usage](#usage)
+   - [Message formatting](#message-formatting)
+7. [Update](#update)
+8. [Uninstall](#uninstall)
+   - [Commands](#commands)
+   - [Uninstall options](#uninstall-options)
+   - [What is removed and what is kept](#what-is-removed-and-what-is-kept)
+   - [Uninstall examples](#uninstall-examples)
+9. [CLI commands](#cli-commands)
 10. [HTTP API](#http-api)
 11. [Troubleshooting](#troubleshooting)
 12. [Development](#development)
+13. [License](#license)
 
 ## Quick start
 
@@ -60,6 +68,21 @@ hermes gateway                       # start chatting
 The rest of this section explains every option. If the defaults suit you, you are
 done.
 
+## How it works
+
+```mermaid
+flowchart LR
+  Z[Zalo servers] <-- "WebSocket in<br/>HTTPS out" --> B["Bridge (Node + zca-js)<br/>background service"]
+  B -- "SSE  GET /events" --> A["Hermes adapter (Python)<br/>~/.hermes[/profiles/name]/plugins/zalo"]
+  A -- "REST  POST /send, /api/…" --> B
+  A <--> H[Hermes gateway + agent]
+```
+
+| Part                                                | Runs as                                                                             | Job                                                                                                                                 |
+| --------------------------------------------------- | ----------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| **Bridge** (`server.js`, `zaloClient.js`) | systemd user unit (Linux), launchd agent (macOS), Scheduled Task at logon (Windows) | Keeps the Zalo session alive, streams inbound events over SSE, exposes REST routes for every zca-js method behind an action policy. |
+| **Adapter** (`hermes-plugin/`)              | Plugin `zalo-platform` inside `hermes gateway`                                  | Turns events into Hermes messages, downloads media, decides which chats to answer, sends replies through the bridge.                |
+
 ## Install
 
 ### Running the installer
@@ -74,14 +97,14 @@ overwritten.
 
 ### What the installer does
 
-| Step | Action                                                                                                         | Skipped by           |
-| ---- | -------------------------------------------------------------------------------------------------------------- | -------------------- |
-| 0    | Checks Node ≥ 18 and resolves the [Hermes profile(s)](#choosing-the-hermes-profile).                           | —                    |
-| 1    | `npm install` if `node_modules/zca-js` is missing (needs `npm` on PATH).     | `--service-only`     |
-| 2    | Zalo QR login (reuses the saved session if it still works).                                                    | `--service-only`     |
-| 3    | Registers the bridge as a background service: systemd user unit (Linux), launchd agent (macOS), Scheduled Task at logon (Windows). | `--no-service` |
-| 4    | Copies the Python adapter into `<profile>/plugins/zalo`, adds `zalo-platform` to `plugins.enabled` and the plugin toolsets to `platform_toolsets.zalo` in `<profile>/config.yaml`. | default profile missing |
-| 5    | Optional [tool access hook](#tool-access-hook-optional): copies it to `<profile>/agent-hooks/`, registers it under `hooks.pre_tool_call`, writes owner settings to `<profile>/.env`. | runs only with a hook option, or when the hook is already installed |
+| Step | Action                                                                                                                                                                                       | Skipped by                                                          |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| 0    | Checks Node ≥ 18 and resolves the [Hermes profile(s)](#choosing-the-hermes-profile).                                                                                                         | —                                                                  |
+| 1    | `npm install` if `node_modules/zca-js` is missing (needs `npm` on PATH).                                                                                                               | `--service-only`                                                  |
+| 2    | Zalo QR login (reuses the saved session if it still works).                                                                                                                                  | `--service-only`                                                  |
+| 3    | Registers the bridge as a background service: systemd user unit (Linux), launchd agent (macOS), Scheduled Task at logon (Windows).                                                           | `--no-service`                                                    |
+| 4    | Copies the Python adapter into `<profile>/plugins/zalo`, adds `zalo-platform` to `plugins.enabled` and the plugin toolsets to `platform_toolsets.zalo` in `<profile>/config.yaml`. | default profile missing                                             |
+| 5    | Optional [tool access hook](#tool-access-hook-optional): copies it to `<profile>/agent-hooks/`, registers it under `hooks.pre_tool_call`, writes owner settings to `<profile>/.env`.    | runs only with a hook option, or when the hook is already installed |
 
 `<profile>` is the folder of the chosen Hermes profile.
 
@@ -91,18 +114,18 @@ Hermes can run several independent profiles (`hermes profile list`). The adapter
 and the hook are installed into the profile(s) you pick by **name**; list several
 with commas (`--profile default,work`). The installer turns the name into a folder exactly like `hermes -p <name>` does:
 
-| Profile name | Folder (macOS / Linux)      | Folder (Windows)                         |
-| ------------ | --------------------------- | ---------------------------------------- |
-| `default`    | `~/.hermes`                 | `%LOCALAPPDATA%\hermes`                  |
-| `<name>`     | `~/.hermes/profiles/<name>` | `%LOCALAPPDATA%\hermes\profiles\<name>`  |
+| Profile name | Folder (macOS / Linux)        | Folder (Windows)                          |
+| ------------ | ----------------------------- | ----------------------------------------- |
+| `default`  | `~/.hermes`                 | `%LOCALAPPDATA%\hermes`                 |
+| `<name>`   | `~/.hermes/profiles/<name>` | `%LOCALAPPDATA%\hermes\profiles\<name>` |
 
 The target comes from the first of these that is set:
 
-| # | Source                           | Example                                  | Notes                                                         |
-| - | -------------------------------- | ---------------------------------------- | ------------------------------------------------------------- |
-| 1 | `--profile <name>` / `-p <name>` | `--profile work`, `-p=work`              | Recommended.                                                  |
-| 2 | `--hermes-home <path>`           | `--hermes-home /srv/hermes/work`         | Explicit folder. Cannot be combined with `--profile`.         |
-| 3 | nothing                          | `node bin/cli.mjs setup`                 | The `default` profile, **only if its folder already exists**. |
+| # | Source                               | Example                            | Notes                                                                 |
+| - | ------------------------------------ | ---------------------------------- | --------------------------------------------------------------------- |
+| 1 | `--profile <name>` / `-p <name>` | `--profile work`, `-p=work`    | Recommended.                                                          |
+| 2 | `--hermes-home <path>`             | `--hermes-home /srv/hermes/work` | Explicit folder. Cannot be combined with `--profile`.               |
+| 3 | nothing                              | `node bin/cli.mjs setup`         | The `default` profile, **only if its folder already exists**. |
 
 Rules:
 
@@ -124,16 +147,16 @@ Rules:
 
 ### Install options
 
-| Option                    | Value                         | Effect                                                                                                        |
-| ------------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `-p`, `--profile`         | profile name(s): `work` or `default,work` | Hermes profile(s) to install the adapter (and hook) into. See [above](#choosing-the-hermes-profile). |
-| `--hermes-home`           | folder                        | Advanced: install into this folder instead of a profile. `~` is expanded.                                     |
-| `--service-only`          | —                             | Only steps 3–5: (re)install the service and the adapter. No dependency install, no login. Use after updates. |
-| `--no-service`            | —                             | Skip step 3. Run the bridge yourself with `node bin/cli.mjs start`.                                         |
-| `--relogin` (`--force`)   | —                             | Force a new QR scan. A running service is stopped first and started again afterwards.                         |
-| `--with-hook`             | —                             | Also install the tool access hook (with no owner set, every Zalo user is blocked from all tools).             |
-| `--hook-owner`            | uid list: `123` or `123,456`  | Install the hook and write `ZALO_HOOK_OWNERS` to `<profile>/.env`. Digits only, comma-separated.              |
-| `--hook-mode`             | `read` · `full-dm` · `full`   | Install the hook and write `ZALO_HOOK_OWNER_MODE` to `<profile>/.env`.                                        |
+| Option                      | Value                                         | Effect                                                                                                        |
+| --------------------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `-p`, `--profile`       | profile name(s): `work` or `default,work` | Hermes profile(s) to install the adapter (and hook) into. See [above](#choosing-the-hermes-profile).           |
+| `--hermes-home`           | folder                                        | Advanced: install into this folder instead of a profile. `~` is expanded.                                   |
+| `--service-only`          | —                                            | Only steps 3–5: (re)install the service and the adapter. No dependency install, no login. Use after updates. |
+| `--no-service`            | —                                            | Skip step 3. Run the bridge yourself with `node bin/cli.mjs start`.                                         |
+| `--relogin` (`--force`) | —                                            | Force a new QR scan. A running service is stopped first and started again afterwards.                         |
+| `--with-hook`             | —                                            | Also install the tool access hook (with no owner set, every Zalo user is blocked from all tools).             |
+| `--hook-owner`            | uid list: `123` or `123,456`              | Install the hook and write `ZALO_HOOK_OWNERS` to `<profile>/.env`. Digits only, comma-separated.          |
+| `--hook-mode`             | `read` · `full-dm` · `full`           | Install the hook and write `ZALO_HOOK_OWNER_MODE` to `<profile>/.env`.                                    |
 
 Values can be given as `--option value` or `--option=value`. Notes:
 
@@ -145,11 +168,11 @@ Values can be given as `--option value` or `--option=value`. Notes:
 
 ### Environment variables read by the installer
 
-| Variable                                                 | Effect                                                                                          |
-| -------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `ZALO_DATA_DIR`                                          | Bridge data folder (login, `bridge.env`, logs). Default `~/.hermes-zalo`.                       |
-| `ZALO_BRIDGE_ENV`, `ZALO_CREDENTIALS_PATH`, `ZALO_QR_PATH`, `ZALO_CLIMSG_DIR`, `ZALO_LOG_DIR` | Override single bridge files or folders.                   |
-| `ZALO_PLUGIN_PORT`                                       | Only changes the URL printed at the end; the bridge reads its port from `bridge.env`.           |
+| Variable                                                                                                | Effect                                                                                  |
+| ------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `ZALO_DATA_DIR`                                                                                       | Bridge data folder (login, `bridge.env`, logs). Default `~/.hermes-zalo`.           |
+| `ZALO_BRIDGE_ENV`, `ZALO_CREDENTIALS_PATH`, `ZALO_QR_PATH`, `ZALO_CLIMSG_DIR`, `ZALO_LOG_DIR` | Override single bridge files or folders.                                                |
+| `ZALO_PLUGIN_PORT`                                                                                    | Only changes the URL printed at the end; the bridge reads its port from `bridge.env`. |
 
 The `ZALO_*` path variables you install with are written into the service
 definition, so the background bridge uses the same locations. Set them again on
@@ -199,153 +222,19 @@ node bin/cli.mjs setup --profile work
 
 ### What gets installed where
 
-| What              | Location                                                                                                    |
-| ----------------- | ----------------------------------------------------------------------------------------------------------- |
-| Bridge code       | The git checkout. The service runs from here: don't move or delete it.                                      |
+| What              | Location                                                                                                                |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Bridge code       | The git checkout. The service runs from here: don't move or delete it.                                                  |
 | Bridge data       | `~/.hermes-zalo/` (`ZALO_DATA_DIR`): `credentials.json`, `bridge.env`, `qr.png`, undo cache, group log, logs. |
-| Service (Linux)   | `~/.config/systemd/user/com.hermes.zaloplugin.service`                                                      |
-| Service (macOS)   | `~/Library/LaunchAgents/com.hermes.zaloplugin.plist`                                                        |
-| Service (Windows) | Scheduled Task `HermesZaloPlugin` + `~/.hermes-zalo/bridge-launcher.cmd`                                    |
-| Adapter           | `<profile>/plugins/zalo/`                                                                                   |
-| Hermes config     | `<profile>/config.yaml` (`plugins.enabled`, `platform_toolsets.zalo`, `hooks.pre_tool_call`)                |
-| Hook (optional)   | `<profile>/agent-hooks/zalo-tool-access.py`, settings in `<profile>/.env`                                   |
+| Service (Linux)   | `~/.config/systemd/user/com.hermes.zaloplugin.service`                                                                |
+| Service (macOS)   | `~/Library/LaunchAgents/com.hermes.zaloplugin.plist`                                                                  |
+| Service (Windows) | Scheduled Task `HermesZaloPlugin` + `~/.hermes-zalo/bridge-launcher.cmd`                                            |
+| Adapter           | `<profile>/plugins/zalo/`                                                                                             |
+| Hermes config     | `<profile>/config.yaml` (`plugins.enabled`, `platform_toolsets.zalo`, `hooks.pre_tool_call`)                    |
+| Hook (optional)   | `<profile>/agent-hooks/zalo-tool-access.py`, settings in `<profile>/.env`                                           |
 
 There is **one bridge per machine** (one Zalo account), shared by every profile;
 each profile has **its own copy** of the adapter.
-
-## Update
-
-Login and settings are kept.
-
-```bash
-git pull && npm install
-node bin/cli.mjs setup --service-only --profile <name>[,<name>…]  # every profile that has the adapter
-hermes -p <name> gateway restart                # default profile: hermes gateway restart
-```
-
-Leave out `--profile` for the default profile. If you installed with `ZALO_*` path
-variables, set them again here.
-
-## Uninstall
-
-### Commands
-
-Run it from the git checkout, on any OS: `node bin/cli.mjs uninstall [options]`.
-
-### Uninstall options
-
-| Option / variable                        | Value        | Effect                                                                              |
-| ---------------------------------------- | ------------ | ----------------------------------------------------------------------------------- |
-| `-p`, `--profile`                        | profile name(s) | Remove the adapter and hook from these profiles (comma-separated). Same rules as for install. |
-| `--hermes-home`                          | folder       | Remove them from this folder instead.                                               |
-| `--purge`                                | —            | Also delete the saved Zalo login (`credentials.json`). The next install shows a QR. |
-| `ZALO_DATA_DIR`, `ZALO_CREDENTIALS_PATH` | env vars     | Where to find the login if you moved it.                |
-
-Unlike install, a missing profile is not an error: uninstall reports that there is
-nothing to remove there and carries on.
-
-### What is removed and what is kept
-
-| Removed                                                                | Kept                                                       |
-| ---------------------------------------------------------------------- | ---------------------------------------------------------- |
-| The background service (stopped and unregistered)                      | The bridge code (git checkout)                  |
-| `<profile>/plugins/zalo/`                                              | `~/.hermes-zalo/` (`bridge.env`, logs, caches)             |
-| `zalo-platform` in `plugins.enabled` of `<profile>/config.yaml`        | The Zalo login, unless `--purge`                           |
-| The hook file and its `hooks.pre_tool_call` entry                      | `ZALO_*` lines in `<profile>/.env` (reused on reinstall)   |
-|                                                                        | `platform_toolsets.zalo` and the rest of `config.yaml`     |
-
-Uninstall always removes the **service** together with the adapter of the chosen
-profile. To remove Zalo from one profile but keep it in another, uninstall and
-then reinstall for the profile you keep:
-
-```bash
-node bin/cli.mjs uninstall --profile work
-node bin/cli.mjs setup --service-only --profile lily
-```
-
-### Uninstall examples
-
-```bash
-node bin/cli.mjs uninstall                      # default profile, keep the login
-node bin/cli.mjs uninstall --profile work       # named profile
-node bin/cli.mjs uninstall --profile work --purge  # also log out (delete credentials)
-
-# Remove everything
-node bin/cli.mjs uninstall --profile work,lily --purge  # every profile that had the adapter
-rm -rf ~/.hermes-zalo                           # bridge data
-rm -rf /path/to/the/git/checkout               # bridge code
-hermes -p work gateway restart
-```
-
-Restart `hermes gateway` of each affected profile afterwards.
-
-## How it works
-
-```mermaid
-flowchart LR
-  Z[Zalo servers] <-- "WebSocket in<br/>HTTPS out" --> B["Bridge (Node + zca-js)<br/>background service"]
-  B -- "SSE  GET /events" --> A["Hermes adapter (Python)<br/>~/.hermes[/profiles/name]/plugins/zalo"]
-  A -- "REST  POST /send, /api/…" --> B
-  A <--> H[Hermes gateway + agent]
-```
-
-| Part                                      | Runs as                                                                                  | Job                                                                                                                                  |
-| ----------------------------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| **Bridge** (`server.js`, `zaloClient.js`) | systemd user unit (Linux), launchd agent (macOS), Scheduled Task at logon (Windows)       | Keeps the Zalo session alive, streams inbound events over SSE, exposes REST routes for every zca-js method behind an action policy. |
-| **Adapter** (`hermes-plugin/`)            | Plugin `zalo-platform` inside `hermes gateway`                                           | Turns events into Hermes messages, downloads media, decides which chats to answer, sends replies through the bridge.               |
-
-## CLI commands
-
-Run from the git checkout: `node bin/cli.mjs <command>`.
-
-| Command               | What it does                                                         |
-| --------------------- | -------------------------------------------------------------------- |
-| `setup [options]`     | The installer, see [Install options](#install-options).              |
-| `uninstall [options]` | The uninstaller, see [Uninstall options](#uninstall-options).        |
-| `status`              | Service state, bridge health, logged-in account, data paths.         |
-| `login [--force]`     | QR login. A running bridge picks up the new session by itself.       |
-| `restart`             | Restart (or start) the service. Needed after editing `bridge.env`.   |
-| `stop`                | Stop the service; it stays installed.                                |
-| `start`               | Run the bridge in the foreground.                                    |
-| `help`                | List commands and options.                                           |
-
-## Usage
-
-<p align="center">
-  <img src="./assets/zalo-chat.svg" alt="Chatting with the Hermes agent from Zalo" width="300">
-</p>
-
-- **Private chat:** message the bot's Zalo account.
-- **Groups:** by default (`ZALO_GROUP_MODE=mention`) the bot answers only when
-  @mentioned, replied to, or when a message starts with its display name. With no
-  group selected in the wizard, it stays out of all groups.
-- **Group stats & summaries:** add `zalo_groups` under `platform_toolsets.zalo` in
-  `config.yaml` to give the agent `zalo_group_stats` and `zalo_group_messages`. Only
-  messages received while the bridge was running are available
-  (`ZALO_GROUP_LOG_DAYS`).
-- **Finding IDs:** set `ZALO_LOG_IDS=true`, send a message, read the
-  `uid=… threadId=…` line in the gateway log. `hermes gateway setup` searches
-  contacts by name, so you rarely need raw IDs.
-
-### Message formatting
-
-The agent writes Markdown; the bridge converts it to Zalo text styles.
-
-| Markdown                                         | Zalo                                  |
-| ------------------------------------------------ | ------------------------------------- |
-| `**bold**`, `*italic*`, `***both***`, `~~strike~~` | matching style                      |
-| `` `code` ``                                     | bold (no monospace in Zalo)           |
-| `# Heading` (any level)                          | bold + large                          |
-| `> quote`                                        | italic                                |
-| `1. item`                                        | number in bold + large                |
-| `- item`, nested items                           | `- item`, nested become `• item`      |
-| `[label](https://…)`                             | **label** (https://…)                 |
-| `[red]…[/red]`, `[orange]`, `[yellow]`, `[green]` | colored text (aliases: `do`, `cam`, `vang`, `xanh`) |
-
-Markers must touch the words they wrap (`2 * 3`, `snake_case` stay as-is) and never
-cross a line break. Code fences are stripped, `---` is dropped, tables arrive as
-plain text. Long replies are split at paragraph/line breaks to fit Zalo's limits
-(2000 characters, 40 styles).
 
 ## Configuration
 
@@ -354,35 +243,35 @@ writes both files below.
 
 **Adapter:** `<profile>/.env`. Restart `hermes gateway` after editing.
 
-| Var                    | Default     | Meaning                                                                                              |
-| ---------------------- | ----------- | ---------------------------------------------------------------------------------------------------- |
-| `ZALO_PLUGIN_URL`      | required    | Bridge address, e.g. `http://127.0.0.1:8787`.                                                        |
-| `ZALO_PLUGIN_TOKEN`    | —           | Must match the bridge token, if set.                                                                 |
-| `ZALO_ALLOWED_USERS`   | empty       | Comma-separated uids allowed to use the bot.                                                         |
-| `ZALO_ALLOW_ALL_USERS` | `false`     | `true` lets anyone talk to the bot. Otherwise unknown senders must pair or be allowlisted.           |
-| `ZALO_ALLOWED_THREADS` | empty = all | Comma-separated group/chat IDs the bot works in.                                                     |
-| `ZALO_GROUP_MODE`      | `mention`   | `mention` · `all` · `off`                                                                            |
-| `ZALO_GROUP_TRIGGERS`  | empty       | Extra words that address the bot when a group message starts with them (e.g. `bot,hermes`).          |
-| `ZALO_REPLY_QUOTE`     | `group`     | Quote the message being answered: `group` · `all` · `off`                                            |
-| `ZALO_MEDIA_WAIT`      | `300`       | Seconds a text-less attachment waits for the sender's next text. `0` answers it alone.               |
-| `ZALO_OWNER_IDS`       | `ZALO_HOOK_OWNERS`, then `allow_admin_from` | Owner uids; their sessions are tagged as the verified owner.           |
-| `ZALO_HOME_CHANNEL`    | —           | Cron delivery target: `<uid>` or `group:<id>`.                                                       |
-| `ZALO_LOG_IDS`         | `false`     | Log uid and threadId of every inbound message.                                                       |
+| Var                      | Default                                         | Meaning                                                                                       |
+| ------------------------ | ----------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `ZALO_PLUGIN_URL`      | required                                        | Bridge address, e.g. `http://127.0.0.1:8787`.                                               |
+| `ZALO_PLUGIN_TOKEN`    | —                                              | Must match the bridge token, if set.                                                          |
+| `ZALO_ALLOWED_USERS`   | empty                                           | Comma-separated uids allowed to use the bot.                                                  |
+| `ZALO_ALLOW_ALL_USERS` | `false`                                       | `true` lets anyone talk to the bot. Otherwise unknown senders must pair or be allowlisted.  |
+| `ZALO_ALLOWED_THREADS` | empty = all                                     | Comma-separated group/chat IDs the bot works in.                                              |
+| `ZALO_GROUP_MODE`      | `mention`                                     | `mention` · `all` · `off`                                                             |
+| `ZALO_GROUP_TRIGGERS`  | empty                                           | Extra words that address the bot when a group message starts with them (e.g. `bot,hermes`). |
+| `ZALO_REPLY_QUOTE`     | `group`                                       | Quote the message being answered: `group` · `all` · `off`                             |
+| `ZALO_MEDIA_WAIT`      | `300`                                         | Seconds a text-less attachment waits for the sender's next text. `0` answers it alone.      |
+| `ZALO_OWNER_IDS`       | `ZALO_HOOK_OWNERS`, then `allow_admin_from` | Owner uids; their sessions are tagged as the verified owner.                                  |
+| `ZALO_HOME_CHANNEL`    | —                                              | Cron delivery target: `<uid>` or `group:<id>`.                                            |
+| `ZALO_LOG_IDS`         | `false`                                       | Log uid and threadId of every inbound message.                                                |
 
 **Bridge:** `~/.hermes-zalo/bridge.env` (`KEY=VALUE`; real env vars win). Run
 `node bin/cli.mjs restart` after editing.
 
-| Var                                             | Default              | Meaning                                                                                       |
-| ----------------------------------------------- | -------------------- | --------------------------------------------------------------------------------------------- |
-| `ZALO_PLUGIN_PORT` / `ZALO_PLUGIN_HOST`         | `8787` / `127.0.0.1` | Listen address. Keep it on loopback.                                                          |
-| `ZALO_PLUGIN_TOKEN`                             | —                    | Shared secret for every route except `/health`.                                               |
-| `ZALO_ALLOWED_ACTION_GROUPS`                    | `read,send,interact` | `read` < `send` < `interact` < `manage` < `destructive`, or `all`.                            |
-| `ZALO_ALLOW_DESTRUCTIVE`                        | `false`              | Required for any `destructive` action, even with `all`.                                       |
-| `ZALO_ALLOWED_ACTIONS` / `ZALO_DENIED_ACTIONS`  | —                    | Method names to always allow / block. Deny wins.                                              |
-| `ZALO_CLIMSG_RETENTION_DAYS`                    | `30`                 | Days of undo cache on disk. `0` = memory only.                                                |
-| `ZALO_GROUP_LOG_DAYS`                           | `3`                  | Days of group messages kept for stats/summaries. `0` = last day, memory only.                 |
-| `ZALO_INFO_CACHE_TTL` / `ZALO_INFO_MIN_INTERVAL_MS` | `600` s / `1500` ms | Cache and throttle for info lookups (avoids account locks).                               |
-| `ZALO_SELF_LISTEN`                              | off                  | Also emit your own outgoing messages.                                                         |
+| Var                                                     | Default                  | Meaning                                                                         |
+| ------------------------------------------------------- | ------------------------ | ------------------------------------------------------------------------------- |
+| `ZALO_PLUGIN_PORT` / `ZALO_PLUGIN_HOST`             | `8787` / `127.0.0.1` | Listen address. Keep it on loopback.                                            |
+| `ZALO_PLUGIN_TOKEN`                                   | —                       | Shared secret for every route except `/health`.                               |
+| `ZALO_ALLOWED_ACTION_GROUPS`                          | `read,send,interact`   | `read` < `send` < `interact` < `manage` < `destructive`, or `all`.  |
+| `ZALO_ALLOW_DESTRUCTIVE`                              | `false`                | Required for any `destructive` action, even with `all`.                     |
+| `ZALO_ALLOWED_ACTIONS` / `ZALO_DENIED_ACTIONS`      | —                       | Method names to always allow / block. Deny wins.                                |
+| `ZALO_CLIMSG_RETENTION_DAYS`                          | `30`                   | Days of undo cache on disk. `0` = memory only.                                |
+| `ZALO_GROUP_LOG_DAYS`                                 | `3`                    | Days of group messages kept for stats/summaries. `0` = last day, memory only. |
+| `ZALO_INFO_CACHE_TTL` / `ZALO_INFO_MIN_INTERVAL_MS` | `600` s / `1500` ms  | Cache and throttle for info lookups (avoids account locks).                     |
+| `ZALO_SELF_LISTEN`                                    | off                      | Also emit your own outgoing messages.                                           |
 
 `GET /policy` shows the active policy; the full action map is in [permissions.js](./permissions.js).
 
@@ -412,18 +301,26 @@ The installer copies the script to `<profile>/agent-hooks/`, registers it under
 entry (the `ZALO_HOOK_*` settings stay). Without an owner, every Zalo user is
 blocked from all tools.
 
+To remove just the hook and keep Zalo running:
+
+```bash
+node bin/cli.mjs uninstall --hook-only --profile <name>   # then: hermes -p <name> gateway restart
+```
+
+Later runs of `setup` do not bring it back unless you pass a hook option again.
+
 Settings go in `<profile>/.env` (or as script arguments, which take precedence).
 Lists are comma-separated. `$P` below is the profile folder.
 
-| Var                      | Argument         | Default                                                                                   |
-| ------------------------ | ---------------- | ----------------------------------------------------------------------------------------- |
-| `ZALO_HOOK_OWNERS`       | `--owner`        | none: every Zalo user is blocked                                                          |
+| Var                        | Argument           | Default                                                                                                                            |
+| -------------------------- | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `ZALO_HOOK_OWNERS`       | `--owner`        | none: every Zalo user is blocked                                                                                                   |
 | `ZALO_HOOK_OWNER_MODE`   | `--owner-mode`   | `read`. `full-dm`: all tools in 1-1 chats, read-only in groups. `full`: all tools everywhere. Credential files stay blocked. |
 | `ZALO_HOOK_OWNER_TOOLS`  | `--owner-tools`  | `read_file, search_files, vision_analyze, todo_list, tool_search, tool_describe, clarify, zalo_group_stats, zalo_group_messages` |
-| `ZALO_HOOK_EXTRA_TOOLS`  | `--extra-tools`  | — (extra tools for owners, e.g. `web_search`)                                             |
-| `ZALO_HOOK_SECRET_PATHS` | `--secret-paths` | —                                                                                         |
-| `ZALO_HOOK_ALLOW_PATHS`  | `--allow-paths`  | — (`$P/cache/{documents,images,audio,videos}` always allowed)                             |
-| `ZALO_HOOK_LOG`          | `--log`          | `$P/logs/zalo-tool-access.log`                                                            |
+| `ZALO_HOOK_EXTRA_TOOLS`  | `--extra-tools`  | — (extra tools for owners, e.g. `web_search`)                                                                                   |
+| `ZALO_HOOK_SECRET_PATHS` | `--secret-paths` | —                                                                                                                                 |
+| `ZALO_HOOK_ALLOW_PATHS`  | `--allow-paths`  | — (`$P/cache/{documents,images,audio,videos}` always allowed)                                                                   |
+| `ZALO_HOOK_LOG`          | `--log`          | `$P/logs/zalo-tool-access.log`                                                                                                   |
 
 Hermes runs a new or changed hook only after you approve it. The installer prints
 the exact command; approve once (again whenever the hook path changes), then
@@ -450,7 +347,6 @@ e.g. `P=~/.hermes/profiles/<name>`.
    ```bash
    node bin/cli.mjs setup --service-only --profile <name> --hook-owner <uid> --hook-mode full-dm
    ```
-
 2. `$P/config.yaml`:
 
    ```yaml
@@ -461,7 +357,6 @@ e.g. `P=~/.hermes/profiles/<name>`.
      zalo: [clarify, code_execution, cronjob, delegation, file, memory,
             session_search, skills, terminal, todo, vision, web, zalo_groups]
    ```
-
 3. `$P/SOUL.md`, before any Zalo restrictions:
 
    ```markdown
@@ -473,48 +368,168 @@ e.g. `P=~/.hermes/profiles/<name>`.
    secrets verbatim and confirm before destructive actions.
    Owner in a group: read-only tools. Everyone else: the rules below apply.
    ```
-
 4. Restart the gateway, check `grep "owner uid(s) configured" ~/.hermes/logs/gateway.log`,
    then the owner sends `/new` to the bot (old sessions keep their old tools).
+
+## Usage
+
+<p align="center">
+  <img src="./assets/zalo-chat.svg" alt="Chatting with the Hermes agent from Zalo" width="300">
+</p>
+
+- **Private chat:** message the bot's Zalo account.
+- **Groups:** by default (`ZALO_GROUP_MODE=mention`) the bot answers only when
+  @mentioned, replied to, or when a message starts with its display name. With no
+  group selected in the wizard, it stays out of all groups.
+- **Group stats & summaries:** add `zalo_groups` under `platform_toolsets.zalo` in
+  `config.yaml` to give the agent `zalo_group_stats` and `zalo_group_messages`. Only
+  messages received while the bridge was running are available
+  (`ZALO_GROUP_LOG_DAYS`).
+- **Finding IDs:** set `ZALO_LOG_IDS=true`, send a message, read the
+  `uid=… threadId=…` line in the gateway log. `hermes gateway setup` searches
+  contacts by name, so you rarely need raw IDs.
+
+### Message formatting
+
+The agent writes Markdown; the bridge converts it to Zalo text styles.
+
+| Markdown                                                   | Zalo                                                        |
+| ---------------------------------------------------------- | ----------------------------------------------------------- |
+| `**bold**`, `*italic*`, `***both***`, `~~strike~~` | matching style                                              |
+| `` `code` ``                                               | bold (no monospace in Zalo)                                 |
+| `# Heading` (any level)                                  | bold + large                                                |
+| `> quote`                                                | italic                                                      |
+| `1. item`                                                | number in bold + large                                      |
+| `- item`, nested items                                   | `- item`, nested become `• item`                       |
+| `[label](https://…)`                                    | **label** (https://…)                                |
+| `[red]…[/red]`, `[orange]`, `[yellow]`, `[green]` | colored text (aliases: `do`, `cam`, `vang`, `xanh`) |
+
+Markers must touch the words they wrap (`2 * 3`, `snake_case` stay as-is) and never
+cross a line break. Code fences are stripped, `---` is dropped, tables arrive as
+plain text. Long replies are split at paragraph/line breaks to fit Zalo's limits
+(2000 characters, 40 styles).
+
+## Update
+
+Login and settings are kept.
+
+```bash
+git pull && npm install
+node bin/cli.mjs setup --service-only --profile <name>[,<name>…]  # every profile that has the adapter
+hermes -p <name> gateway restart                # default profile: hermes gateway restart
+```
+
+Leave out `--profile` for the default profile. If you installed with `ZALO_*` path
+variables, set them again here.
+
+## Uninstall
+
+### Commands
+
+Run it from the git checkout, on any OS: `node bin/cli.mjs uninstall [options]`.
+
+### Uninstall options
+
+| Option / variable                            | Value           | Effect                                                                                                 |
+| -------------------------------------------- | --------------- | ------------------------------------------------------------------------------------------------------ |
+| `-p`, `--profile`                        | profile name(s) | Remove the adapter and hook from these profiles (comma-separated). Same rules as for install.          |
+| `--hermes-home`                            | folder          | Remove them from this folder instead.                                                                  |
+| `--purge`                                  | —              | Also delete the saved Zalo login (`credentials.json`). The next install shows a QR.                  |
+| `--hook-only`                              | —              | Remove **only** the tool access hook; keep the service, adapter and login. Not with `--purge`. |
+| `ZALO_DATA_DIR`, `ZALO_CREDENTIALS_PATH` | env vars        | Where to find the login if you moved it.                                                               |
+
+Unlike install, a missing profile is not an error: uninstall reports that there is
+nothing to remove there and carries on.
+
+### What is removed and what is kept
+
+| Removed                                                               | Kept                                                         |
+| --------------------------------------------------------------------- | ------------------------------------------------------------ |
+| The background service (stopped and unregistered)                     | The bridge code (git checkout)                               |
+| `<profile>/plugins/zalo/`                                           | `~/.hermes-zalo/` (`bridge.env`, logs, caches)           |
+| `zalo-platform` in `plugins.enabled` of `<profile>/config.yaml` | The Zalo login, unless `--purge`                           |
+| The hook file and its `hooks.pre_tool_call` entry                   | `ZALO_*` lines in `<profile>/.env` (reused on reinstall) |
+|                                                                       | `platform_toolsets.zalo` and the rest of `config.yaml`   |
+
+Uninstall always removes the **service** together with the adapter of the chosen
+profile. To remove Zalo from one profile but keep it in another, uninstall and
+then reinstall for the profile you keep:
+
+```bash
+node bin/cli.mjs uninstall --profile work
+node bin/cli.mjs setup --service-only --profile lily
+```
+
+### Uninstall examples
+
+```bash
+node bin/cli.mjs uninstall                      # default profile, keep the login
+node bin/cli.mjs uninstall --profile work       # named profile
+node bin/cli.mjs uninstall --profile work --purge  # also log out (delete credentials)
+node bin/cli.mjs uninstall --profile work --hook-only  # only the tool access hook
+
+# Remove everything
+node bin/cli.mjs uninstall --profile work,lily --purge  # every profile that had the adapter
+rm -rf ~/.hermes-zalo                           # bridge data
+rm -rf /path/to/the/git/checkout               # bridge code
+hermes -p work gateway restart
+```
+
+Restart `hermes gateway` of each affected profile afterwards.
+
+## CLI commands
+
+Run from the git checkout: `node bin/cli.mjs <command>`.
+
+| Command                 | What it does                                                         |
+| ----------------------- | -------------------------------------------------------------------- |
+| `setup [options]`     | The installer, see [Install options](#install-options).               |
+| `uninstall [options]` | The uninstaller, see [Uninstall options](#uninstall-options).         |
+| `status`              | Service state, bridge health, logged-in account, data paths.         |
+| `login [--force]`     | QR login. A running bridge picks up the new session by itself.       |
+| `restart`             | Restart (or start) the service. Needed after editing `bridge.env`. |
+| `stop`                | Stop the service; it stays installed.                                |
+| `start`               | Run the bridge in the foreground.                                    |
+| `help`                | List commands and options.                                           |
 
 ## HTTP API
 
 The bridge listens on `127.0.0.1:8787`. With a token, send it as `x-bridge-token`,
 `Authorization: Bearer <token>`, or `?token=`.
 
-| Route                                                                   | Purpose                                                                                     |
-| ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| `GET /health`                                                           | `{ loggedIn, sessionDead, ownId, ownName, … }`, no token needed                              |
-| `GET /events`                                                           | SSE: `message`, `reaction`, `undo`, `status`, `session_dead`, `friend_event`, `group_event` |
-| `POST /send`                                                            | `{ threadId, threadType: "user"\|"group", text, mentions?, quote?, styles? }`                |
-| `POST /send-attachment` · `/send-voice` · `/send-sticker` · `/send-card` | Media (local paths only)                                                                    |
-| `POST /react` · `/undo` · `/typing`                                     | Reactions, recall, typing indicator                                                         |
-| `GET /contacts` · `/friends` · `/groups` · `/chat-info` · `/stickers` · `/find-user` | Lookups                                                         |
-| `GET /group-stats?hours=` · `/group-messages?groupId=&hours=&limit=`    | Group activity and logged messages                                                          |
-| `POST /group/*` · `/friend/*` · `/poll/create`                          | Group, friend and poll management                                                           |
-| `POST /api/<method>`                                                    | `{ args: [...] }` — any zca-js method, subject to the policy                                |
-| `GET /qr` · `/qr.png` · `/policy` · `POST /relogin` · `/shutdown`       | Session and admin                                                                           |
+| Route                                                                                                 | Purpose                                                                                                   |
+| ----------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `GET /health`                                                                                       | `{ loggedIn, sessionDead, ownId, ownName, … }`, no token needed                                        |
+| `GET /events`                                                                                       | SSE: `message`, `reaction`, `undo`, `status`, `session_dead`, `friend_event`, `group_event` |
+| `POST /send`                                                                                        | `{ threadId, threadType: "user"\|"group", text, mentions?, quote?, styles? }`                            |
+| `POST /send-attachment` · `/send-voice` · `/send-sticker` · `/send-card`                   | Media (local paths only)                                                                                  |
+| `POST /react` · `/undo` · `/typing`                                                           | Reactions, recall, typing indicator                                                                       |
+| `GET /contacts` · `/friends` · `/groups` · `/chat-info` · `/stickers` · `/find-user` | Lookups                                                                                                   |
+| `GET /group-stats?hours=` · `/group-messages?groupId=&hours=&limit=`                             | Group activity and logged messages                                                                        |
+| `POST /group/*` · `/friend/*` · `/poll/create`                                                | Group, friend and poll management                                                                         |
+| `POST /api/<method>`                                                                                | `{ args: [...] }` — any zca-js method, subject to the policy                                           |
+| `GET /qr` · `/qr.png` · `/policy` · `POST /relogin` · `/shutdown`                       | Session and admin                                                                                         |
 
 ## Troubleshooting
 
-| Symptom                                                  | Fix                                                                                              |
-| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `Hermes profile '<name>' not found`                      | Typo, or the profile does not exist yet: `hermes profile list`, `hermes profile create <name>`.  |
-| `… is not a valid Hermes profile name`                   | Use lowercase letters, numbers, `-`, `_` (e.g. `my-work`).                                       |
-| `use either --profile or --hermes-home, not both`        | Keep only one of the two.                                                                        |
-| `Hermes home not found at …/.hermes`, adapter skipped    | No default profile. Pass `--profile <name>`, or install Hermes and re-run with `--service-only`. |
-| Zalo missing in `hermes gateway setup`                   | The adapter went into another profile: check the `Hermes profile: …` line and re-run with the right `--profile`. |
-| `loggedIn=false` or `sessionDead`                        | `node bin/cli.mjs login`; if the cookie is dead, `node bin/cli.mjs setup --relogin`.                     |
-| Session dies with code 3000                              | Another Zalo Web session or bridge is open. Close it, then `login`.                              |
-| `Bridge: NOT running`                                    | `node bin/cli.mjs restart`, or `node bin/cli.mjs setup --service-only` if never installed.               |
-| Service broken after a Node upgrade or moving the folder | Re-run `node bin/cli.mjs setup --service-only` from the current folder.                                    |
-| "I don't recognize you"                                  | Set `ZALO_ALLOWED_USERS` or `ZALO_ALLOW_ALL_USERS=true` (re-run `hermes gateway setup`).         |
-| Bot ignores a group                                      | Not @mentioned, group not in `ZALO_ALLOWED_THREADS`, or `ZALO_GROUP_MODE=off`.                   |
-| HTTP 403                                                 | Blocked by the policy. Widen it in `bridge.env`, then `restart`.                                 |
-| HTTP 401                                                 | `ZALO_PLUGIN_TOKEN` differs between the adapter `.env` and `bridge.env`.                         |
-| Bridge settings have no effect                           | They belong in `bridge.env`, not the Hermes `.env`. Then `restart`.                              |
-| Bridge stopped on Windows                                | The Scheduled Task does not restart after a crash. Run `restart`.                                |
-| Service won't start over SSH (Linux)                     | `loginctl enable-linger $USER`, log in again, `restart`.                                         |
+| Symptom                                                  | Fix                                                                                                                   |
+| -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `Hermes profile '<name>' not found`                    | Typo, or the profile does not exist yet: `hermes profile list`, `hermes profile create <name>`.                   |
+| `… is not a valid Hermes profile name`                | Use lowercase letters, numbers, `-`, `_` (e.g. `my-work`).                                                      |
+| `use either --profile or --hermes-home, not both`      | Keep only one of the two.                                                                                             |
+| `Hermes home not found at …/.hermes`, adapter skipped | No default profile. Pass `--profile <name>`, or install Hermes and re-run with `--service-only`.                  |
+| Zalo missing in `hermes gateway setup`                 | The adapter went into another profile: check the `Hermes profile: …` line and re-run with the right `--profile`. |
+| `loggedIn=false` or `sessionDead`                    | `node bin/cli.mjs login`; if the cookie is dead, `node bin/cli.mjs setup --relogin`.                              |
+| Session dies with code 3000                              | Another Zalo Web session or bridge is open. Close it, then `login`.                                                 |
+| `Bridge: NOT running`                                  | `node bin/cli.mjs restart`, or `node bin/cli.mjs setup --service-only` if never installed.                        |
+| Service broken after a Node upgrade or moving the folder | Re-run `node bin/cli.mjs setup --service-only` from the current folder.                                             |
+| "I don't recognize you"                                  | Set `ZALO_ALLOWED_USERS` or `ZALO_ALLOW_ALL_USERS=true` (re-run `hermes gateway setup`).                        |
+| Bot ignores a group                                      | Not @mentioned, group not in `ZALO_ALLOWED_THREADS`, or `ZALO_GROUP_MODE=off`.                                    |
+| HTTP 403                                                 | Blocked by the policy. Widen it in `bridge.env`, then `restart`.                                                  |
+| HTTP 401                                                 | `ZALO_PLUGIN_TOKEN` differs between the adapter `.env` and `bridge.env`.                                        |
+| Bridge settings have no effect                           | They belong in `bridge.env`, not the Hermes `.env`. Then `restart`.                                             |
+| Bridge stopped on Windows                                | The Scheduled Task does not restart after a crash. Run `restart`.                                                   |
+| Service won't start over SSH (Linux)                     | `loginctl enable-linger $USER`, log in again, `restart`.                                                          |
 
 **Logs:** Linux `journalctl --user -u com.hermes.zaloplugin -f`; macOS/Windows
 `~/.hermes-zalo/bridge.*.log`.
@@ -533,7 +548,3 @@ first (`node bin/cli.mjs stop`).
 
 **Release** (manual, no CI): `npm test` → `npm version patch|minor|major` →
 `git push --follow-tags`. The package is private: users install from the git checkout.
-
-## License
-
-MIT © [Cường Tuấn Nguyễn](https://github.com/cuongdev)

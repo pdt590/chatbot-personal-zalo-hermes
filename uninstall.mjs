@@ -6,6 +6,7 @@
 //   node bin/cli.mjs uninstall --purge      # also delete the saved credentials (logout)
 //   node bin/cli.mjs uninstall --profile <name>[,<name>…]  # remove the adapter from these profiles
 //   node bin/cli.mjs uninstall --hermes-home <dir>         # advanced: an explicit Hermes home
+//   node bin/cli.mjs uninstall --hook-only --profile <name>  # remove only the tool access hook
 
 import fs from "node:fs";
 import path from "node:path";
@@ -15,6 +16,12 @@ import { HOOK_FILE, disablePluginInConfig, removePreToolHook } from "./hermesCon
 
 const argv = process.argv.slice(2);
 const PURGE = argv.includes("--purge");
+// Only the tool access hook: the service, the adapter and the login stay.
+const HOOK_ONLY = argv.includes("--hook-only");
+if (HOOK_ONLY && PURGE) {
+  console.error("\n✗ --hook-only keeps the Zalo login; drop --purge (or --hook-only).");
+  process.exit(1);
+}
 // Resolved before anything is removed, so a bad --profile changes nothing.
 let HERMES_HOMES;
 try {
@@ -63,24 +70,41 @@ function removeHermesPlugin(home) {
 
 // Mirror of install.mjs installToolAccessHook(): drop the hook script and its
 // hooks.pre_tool_call entry. ZALO_HOOK_* lines in .env are left for a reinstall.
+// Returns true when something was removed.
 function removeToolAccessHook(hermesHome, cfgPath) {
   const hookDir = path.join(hermesHome, "agent-hooks");
   const dest = path.join(hookDir, HOOK_FILE);
+  let removed = false;
   if (fs.existsSync(dest)) {
+    removed = true;
     fs.rmSync(dest, { force: true });
     log(`✓ Removed tool access hook: ${dest}`);
     try { fs.rmdirSync(hookDir); } catch { /* not empty: other hooks live there */ }
   }
-  if (!fs.existsSync(cfgPath)) return;
+  if (!fs.existsSync(cfgPath)) return removed;
   try {
     const r = removePreToolHook(fs.readFileSync(cfgPath, "utf-8"));
     if (r.removed) {
+      removed = true;
       fs.writeFileSync(cfgPath, r.text);
       log("✓ Removed the tool access hook from hooks.pre_tool_call in config.yaml");
     }
   } catch (e) {
     log(`⚠ Could not edit config.yaml: ${e.message}`);
     log(`  Manually remove the ${HOOK_FILE} entry from hooks.pre_tool_call in ${cfgPath}`);
+  }
+  return removed;
+}
+
+// --hook-only: the hook of one profile, nothing else.
+function removeHookOnly(home) {
+  log(`Hermes profile: ${home.profile ?? "(custom)"} → ${home.dir} (${hermesHomeSourceLabel(home)})`);
+  if (!fs.existsSync(home.dir)) {
+    log(`• No Hermes home at ${home.dir}.`);
+    return;
+  }
+  if (!removeToolAccessHook(home.dir, path.join(home.dir, "config.yaml"))) {
+    log("• No tool access hook installed in this profile.");
   }
 }
 
@@ -95,8 +119,13 @@ function purgeCredentials() {
 }
 
 console.log("Hermes Zalo Plugin — uninstaller\n================================");
-const svc = removeService();
-log(`${svc.removed ? "✓" : "•"} ${svc.message}.`);
-for (const home of HERMES_HOMES) removeHermesPlugin(home);
-if (PURGE) purgeCredentials();
-console.log("\nDone. (The bridge files themselves were left in place.)");
+if (HOOK_ONLY) {
+  for (const home of HERMES_HOMES) removeHookOnly(home);
+  console.log("\nDone. Service, adapter and login were kept. Restart the gateway to apply.");
+} else {
+  const svc = removeService();
+  log(`${svc.removed ? "✓" : "•"} ${svc.message}.`);
+  for (const home of HERMES_HOMES) removeHermesPlugin(home);
+  if (PURGE) purgeCredentials();
+  console.log("\nDone. (The bridge files themselves were left in place.)");
+}
