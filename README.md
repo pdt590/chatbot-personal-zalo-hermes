@@ -162,6 +162,8 @@ processes. `hermes gateway setup` writes both and offers to restart the bridge.
 | `ZALO_ALLOW_ALL_USERS` | `false`          | Read by the Hermes gateway: `true` lets anyone talk to the bot. Without it, or an allowlist, Hermes asks unknown senders to pair first. |
 | `ZALO_ALLOWED_THREADS` | empty, meaning all | Comma-separated group or chat IDs the bot works in                                                                                        |
 | `ZALO_GROUP_MODE`      | `mention`        | `mention` · `all` · `off`                                                                                                         |
+| `ZALO_GROUP_TRIGGERS` | empty            | Extra comma-separated words that address the bot in groups when a message starts with them (e.g. `bot,hermes`), besides its display name |
+| `ZALO_REPLY_QUOTE`     | `group`          | Whether the bot's answer quotes the message it replies to: `group` (groups only) · `all` · `off` |
 | `ZALO_HOME_CHANNEL`    | —                 | Where cron jobs deliver: `<uid>` or `group:<id>`                                                                                      |
 | `ZALO_LOG_IDS`         | `false`          | Log the uid and threadId of every inbound message                                                                                         |
 

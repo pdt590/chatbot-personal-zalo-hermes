@@ -161,6 +161,8 @@ Cấu hình nằm ở hai nơi, vì bridge và adapter là hai tiến trình ri�
 | `ZALO_ALLOW_ALL_USERS` | `false`                 | Hermes gateway đọc biến này: `true` thì ai cũng nói chuyện được với bot. Không có biến này (hoặc danh sách cho phép), Hermes sẽ yêu cầu người lạ ghép cặp (pairing) trước. |
 | `ZALO_ALLOWED_THREADS` | trống, tức là tất cả | ID nhóm hoặc cuộc chat mà bot hoạt động, cách nhau bằng dấu phẩy                                                                                                                               |
 | `ZALO_GROUP_MODE`      | `mention`               | `mention` · `all` · `off`                                                                                                                                                                         |
+| `ZALO_GROUP_TRIGGERS` | trống                   | Các từ (cách nhau bằng dấu phẩy) dùng để gọi bot trong nhóm khi đứng đầu tin nhắn, ngoài tên hiển thị của bot (vd: `bot,hermes`) |
+| `ZALO_REPLY_QUOTE`     | `group`                 | Câu trả lời của bot có trích dẫn (quote) tin nhắn được hỏi không: `group` (chỉ trong nhóm) · `all` · `off` |
 | `ZALO_HOME_CHANNEL`    | —                        | Nơi nhận tin từ cron: `<uid>` hoặc `group:<id>`                                                                                                                                                   |
 | `ZALO_LOG_IDS`         | `false`                 | Ghi uid và threadId của mọi tin nhắn đến vào log                                                                                                                                                   |
 

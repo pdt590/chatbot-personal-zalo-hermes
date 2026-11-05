@@ -1,11 +1,16 @@
 {
   "4": "server.js",
   "7": "markdownToZalo.js",
-  "8": "permissions.js",
+  "8": "TargetTest",
   "9": "paths.js",
+  "17": "QuotedReplyTest",
   "18": "test_adapter.py",
   "19": "PROPOSAL — Rà soát, sửa lỗi và refactor hermes-zalo-plugin (v1.0.12)",
   "20": "CLAUDE.md",
   "21": "uninstall.sh script",
-  "22": "uninstall.ps1"
+  "22": "uninstall.ps1",
+  "23": "Cfg",
+  "24": "ThreadTypeTest",
+  "25": "ReplyFieldsTest",
+  "26": "StripLeadingNameTest"
 }

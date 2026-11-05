@@ -934,6 +934,15 @@ export class ZaloClient extends EventEmitter {
       // uid of the owner of the quoted message (set when this is a reply). If it
       // equals our ownId, the user is replying to the bot.
       quotedOwnerId: data.quote && data.quote.ownerId ? String(data.quote.ownerId) : "",
+      // The quoted message itself, so the agent knows what is being replied to.
+      quoted: data.quote
+        ? {
+            msgId: String(data.quote.globalMsgId || ""),
+            senderId: String(data.quote.ownerId || ""),
+            senderName: data.quote.fromD || "",
+            text: typeof data.quote.msg === "string" ? data.quote.msg : "",
+          }
+        : null,
       // Enough to build a SendMessageQuote for replies.
       quote: {
         content: data.content,

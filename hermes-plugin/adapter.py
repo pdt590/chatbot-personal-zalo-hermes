@@ -23,7 +23,7 @@ Configuration in config.yaml::
 
 Or via environment variables (override config.yaml):
     ZALO_PLUGIN_URL, ZALO_PLUGIN_TOKEN, ZALO_ALLOWED_USERS,
-    ZALO_ALLOW_ALL_USERS, ZALO_HOME_CHANNEL, ZALO_GROUP_REQUIRE_MENTION
+    ZALO_ALLOW_ALL_USERS, ZALO_HOME_CHANNEL, ZALO_GROUP_MODE, ZALO_GROUP_TRIGGERS
 
 Bridge-side settings (token, action policy, cache tuning) are mirrored by
 `hermes gateway setup` into the bridge's own settings file
@@ -32,10 +32,12 @@ and never reads this profile's .env.
 """
 
 import asyncio
+from collections import OrderedDict
 import json
 import logging
 import os
 import re
+import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -236,6 +238,28 @@ def _truthy(v) -> bool:
     return str(v if v is not None else "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+# "<id>", "group:<id>" or "user:<id>": the forms users write in cron
+# --deliver / send_message targets (zalo:group:<id>) and ZALO_HOME_CHANNEL.
+_TARGET_RE = re.compile(r"^\s*(?:(user|group)\s*:\s*)?(\d+)\s*$", re.IGNORECASE)
+
+
+def _split_target(raw) -> tuple[str, Optional[str]]:
+    """(thread id, "user"|"group"|None) from a target; unknown forms are
+    returned unchanged with no type."""
+    m = _TARGET_RE.match(str(raw or ""))
+    if not m:
+        return str(raw or ""), None
+    return m.group(2), (m.group(1).lower() if m.group(1) else None)
+
+
+def _parse_target_ref(target_ref: str):
+    """Hermes target parser: lets `zalo:group:<id>` reach the adapter as
+    chat_id=<id>. The type itself is re-derived by the adapter from the
+    account's group list, since Hermes passes no thread type."""
+    chat_id, _ = _split_target(target_ref)
+    return (chat_id, None) if _TARGET_RE.match(str(target_ref or "")) else None
+
+
 def _parse_home_channel(raw: str) -> tuple[str, str]:
     """Parse ZALO_HOME_CHANNEL into (chat_id, thread_type).
 
@@ -296,6 +320,14 @@ class ZaloAdapter(BasePlatformAdapter):
         if mode not in {"mention", "all", "off"}:
             mode = "mention"
         self.group_mode = mode
+        # Extra words that address the bot in groups when written first
+        # ("<word> ..."), on top of its Zalo display name. Empty by default:
+        # generic words like "bot" start ordinary sentences in busy groups.
+        self.group_triggers = _csv_env("ZALO_GROUP_TRIGGERS", "group_triggers")
+        # Where a reply quotes the message it answers: "group" (default; in a
+        # busy group it shows who is being answered), "all", or "off".
+        quote_mode = (os.getenv("ZALO_REPLY_QUOTE") or extra.get("reply_quote") or "group").strip().lower()
+        self.reply_quote = quote_mode if quote_mode in {"group", "all", "off"} else "group"
 
         # Note: ZALO_ALLOW_ALL_USERS is read by the Hermes gateway itself
         # (allow_all_env in register()), not here. Without it — or an allowlist
@@ -317,6 +349,15 @@ class ZaloAdapter(BasePlatformAdapter):
         home_id, home_type = _parse_home_channel(os.getenv("ZALO_HOME_CHANNEL") or "")
         if home_id:
             self._thread_types[home_id] = home_type
+        # Ids of every group the account is in, from the bridge. Outbound sends
+        # (cron, send_message) carry no thread type, and Zalo silently drops a
+        # group message sent as a user message, so unknown ids are checked here.
+        self._group_ids: set = set()
+        self._group_ids_fetched_at = 0.0
+        self._group_names: Dict[str, str] = {}
+        # messageId -> SendMessageQuote of recent inbound messages, so a reply
+        # (Hermes passes reply_to=<inbound messageId>) can quote its question.
+        self._quotes: "OrderedDict[str, Dict[str, Any]]" = OrderedDict()
         self._policy: Optional[Dict[str, Any]] = None
 
         self._session = None  # aiohttp.ClientSession
@@ -405,6 +446,8 @@ class ZaloAdapter(BasePlatformAdapter):
         except Exception as e:
             self._policy = None
             logger.warning("Zalo: could not fetch action policy: %s", e)
+
+        await self._refresh_group_ids()
 
         # Start the SSE inbound loop.
         self._sse_task = asyncio.create_task(self._sse_loop())
@@ -531,8 +574,21 @@ class ZaloAdapter(BasePlatformAdapter):
         # context line for the agent (no media). These don't trigger a turn by
         # default unless a handler wants them; we log + optionally dispatch.
         if event_type in ("reaction", "undo", "friend_event", "group_event"):
+            if event_type == "group_event":
+                self._note_group_event(data)
             logger.info("Zalo: %s event %s", event_type, data)
             return
+
+    def _note_group_event(self, ev: Dict[str, Any]) -> None:
+        """Keep the group id set and name cache current from group events."""
+        d = (ev or {}).get("data") or {}
+        gid = str(d.get("groupId") or "")
+        if not gid:
+            return
+        self._group_ids.add(gid)
+        self._thread_types[gid] = "group"
+        if d.get("groupName"):
+            self._group_names[gid] = str(d["groupName"])
 
     async def _on_session_dead(self, data: Dict[str, Any]) -> None:
         """Zalo session ended (logout / kicked / cookie expired)."""
@@ -626,7 +682,7 @@ class ZaloAdapter(BasePlatformAdapter):
 
         source = self.build_source(
             chat_id=thread_id,
-            chat_name=sender_name if chat_type == "dm" else thread_id,
+            chat_name=sender_name if chat_type == "dm" else await self._group_name(thread_id),
             chat_type=chat_type,
             user_id=sender_id,
             user_name=sender_name,
@@ -653,8 +709,57 @@ class ZaloAdapter(BasePlatformAdapter):
             media_urls=media_urls,
             media_types=media_types,
             timestamp=datetime.now(),
+            **self._reply_fields(m),
         )
+        self._remember_quote(m)
         await self.handle_message(event)
+
+    _QUOTE_CACHE_MAX = 500
+
+    def _remember_quote(self, m: Dict[str, Any]) -> None:
+        msg_id = str(m.get("messageId") or "")
+        quote = m.get("quote")
+        if not msg_id or not isinstance(quote, dict) or not quote.get("msgId"):
+            return
+        self._quotes[msg_id] = quote
+        while len(self._quotes) > self._QUOTE_CACHE_MAX:
+            self._quotes.popitem(last=False)
+
+    def _quote_for_reply(self, reply_to: Optional[str], thread_type: str) -> Optional[Dict[str, Any]]:
+        """The quote to attach when answering ``reply_to``, used once: later
+        messages of the same turn go out unquoted."""
+        if not reply_to or self.reply_quote == "off":
+            return None
+        if self.reply_quote == "group" and thread_type != "group":
+            return None
+        return self._quotes.pop(str(reply_to), None)
+
+    def _reply_fields(self, m: Dict[str, Any]) -> Dict[str, Any]:
+        """MessageEvent reply_to_* fields for a message that quotes another."""
+        q = m.get("quoted")
+        if not isinstance(q, dict):
+            return {}
+        author = str(q.get("senderId") or "")
+        return {
+            "reply_to_message_id": str(q.get("msgId") or "") or None,
+            "reply_to_text": q.get("text") or None,
+            "reply_to_author_id": author or None,
+            "reply_to_author_name": q.get("senderName") or None,
+            "reply_to_is_own_message": bool(self._own_id) and author == str(self._own_id),
+        }
+
+    async def _group_name(self, group_id: str) -> str:
+        """Display name of a group (cached); falls back to the id."""
+        gid = str(group_id)
+        if gid not in self._group_names:
+            res = await self._get("/chat-info", params={"threadId": gid, "threadType": "group"})
+            info = (res or {}).get("info") or {}
+            g = (info.get("gridInfoMap") or {}).get(gid) or {}
+            name = str(g.get("name") or "").strip()
+            if not name:
+                return gid  # don't cache a failure; retry on the next message
+            self._group_names[gid] = name
+        return self._group_names[gid]
 
     async def _download_media(self, media: Dict[str, Any]) -> tuple[Optional[str], "MessageType"]:
         """Download a media URL to the Hermes cache. Returns (path, MessageType)."""
@@ -699,8 +804,8 @@ class ZaloAdapter(BasePlatformAdapter):
            it, we're mentioned. Strip the leading bot-name token if present.
         2. Reply-to-bot: bridge forwards quotedOwnerId; if it equals ownId, the
            user replied to one of our messages.
-        3. Text heuristic fallback: message starts with the bot name / a known
-           trigger word (used when we don't have uid signals).
+        3. Text heuristic fallback: message starts with the bot's display name
+           or a configured ZALO_GROUP_TRIGGERS word.
         """
         # 1) Real mention by uid.
         mentions = m.get("mentions") or []
@@ -723,7 +828,7 @@ class ZaloAdapter(BasePlatformAdapter):
         candidates = []
         if self._own_name:
             candidates.append(self._own_name)
-        candidates += ["hermes", "bot"]
+        candidates += self.group_triggers
         for c in candidates:
             # Whole-word match only: "bot ..." / "@bot, ..." address the bot,
             # "both" / "bottom" do not.
@@ -757,14 +862,50 @@ class ZaloAdapter(BasePlatformAdapter):
         except Exception as e:
             return {"error": str(e)}
 
-    def _thread_type_from_chat_id(self, chat_id: str, metadata: Optional[Dict[str, Any]]) -> str:
+    def _known_thread_type(self, chat_id: str, metadata: Optional[Dict[str, Any]]) -> Optional[str]:
         if metadata and metadata.get("thread_type") in {"user", "group"}:
             return metadata["thread_type"]
         # Use the type remembered from inbound messages for this chat.
         remembered = self._thread_types.get(str(chat_id))
         if remembered in {"user", "group"}:
             return remembered
-        return "user"
+        if str(chat_id) in self._group_ids:
+            return "group"
+        return None
+
+    def _thread_type_from_chat_id(self, chat_id: str, metadata: Optional[Dict[str, Any]]) -> str:
+        return self._known_thread_type(chat_id, metadata) or "user"
+
+    async def _target(self, chat_id, metadata: Optional[Dict[str, Any]] = None) -> tuple[str, str]:
+        """(bare thread id, thread type) for an outbound send. Accepts a
+        "group:<id>" / "user:<id>" prefix, which also fixes the type."""
+        tid, prefixed = _split_target(chat_id)
+        if prefixed:
+            self._thread_types[tid] = prefixed
+            return tid, prefixed
+        return tid, await self._resolve_thread_type(tid, metadata)
+
+    async def _resolve_thread_type(self, chat_id: str, metadata: Optional[Dict[str, Any]] = None) -> str:
+        """Thread type for an outbound send. An id we have never seen may be a
+        group joined since the last refresh, so re-read the group list (at most
+        once a minute) before treating it as a user."""
+        known = self._known_thread_type(chat_id, metadata)
+        if known:
+            return known
+        if time.monotonic() - self._group_ids_fetched_at > 60:
+            await self._refresh_group_ids()
+        return self._thread_type_from_chat_id(chat_id, metadata)
+
+    async def _refresh_group_ids(self) -> None:
+        """Load the ids of every group the account is in (GET /groups)."""
+        self._group_ids_fetched_at = time.monotonic()
+        res = await self._get("/groups")
+        groups = (res or {}).get("groups") or {}
+        ids = (groups.get("gridVerMap") or {}) if isinstance(groups, dict) else {}
+        if ids:
+            self._group_ids.update(str(i) for i in ids)
+        elif res.get("error"):
+            logger.warning("Zalo: could not load group list: %s", res.get("error"))
 
     async def send(
         self,
@@ -773,17 +914,25 @@ class ZaloAdapter(BasePlatformAdapter):
         reply_to: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ):
-        thread_type = self._thread_type_from_chat_id(chat_id, metadata)
+        chat_id, thread_type = await self._target(chat_id, metadata)
+        quote = self._quote_for_reply(reply_to, thread_type)
         # Split long messages.
         chunks = self.truncate_message(content, max_length=self.max_message_length)
         last = None
         for chunk in chunks:
             if not chunk.strip():
                 continue
-            res = await self._post(
-                "/send",
-                {"threadId": chat_id, "threadType": thread_type, "text": chunk},
-            )
+            body = {"threadId": chat_id, "threadType": thread_type, "text": chunk}
+            if quote:
+                res = await self._post("/send", {**body, "quote": quote})
+                if res.get("error"):
+                    # zca-js refuses some quote kinds (rich webchat, polls);
+                    # the answer matters more than the quote.
+                    logger.warning("Zalo: quoted reply failed (%s); sending unquoted", res["error"])
+                    res = await self._post("/send", body)
+                quote = None  # only the first message of a reply quotes
+            else:
+                res = await self._post("/send", body)
             if res.get("error"):
                 return SendResult(success=False, error=res["error"])
             last = res
@@ -801,7 +950,7 @@ class ZaloAdapter(BasePlatformAdapter):
         return SendResult(success=True, message_id=msg_id)
 
     async def send_typing(self, chat_id: str, metadata=None) -> None:
-        thread_type = self._thread_type_from_chat_id(chat_id, metadata)
+        chat_id, thread_type = await self._target(chat_id, metadata)
         await self._post("/typing", {"threadId": chat_id, "threadType": thread_type})
 
     async def send_image(self, chat_id, image_url, caption=None, reply_to=None, metadata=None):
@@ -837,7 +986,7 @@ class ZaloAdapter(BasePlatformAdapter):
             return None
 
     async def send_image_file(self, chat_id, image_path, caption=None, reply_to=None, metadata=None, **kwargs):
-        thread_type = self._thread_type_from_chat_id(chat_id, metadata)
+        chat_id, thread_type = await self._target(chat_id, metadata)
         res = await self._post(
             "/send-attachment",
             {"threadId": chat_id, "threadType": thread_type, "path": image_path, "caption": caption or ""},
@@ -847,7 +996,7 @@ class ZaloAdapter(BasePlatformAdapter):
         return SendResult(success=True)
 
     async def send_document(self, chat_id, file_path, caption=None, file_name=None, reply_to=None, metadata=None, **kwargs):
-        thread_type = self._thread_type_from_chat_id(chat_id, metadata)
+        chat_id, thread_type = await self._target(chat_id, metadata)
         res = await self._post(
             "/send-attachment",
             {"threadId": chat_id, "threadType": thread_type, "path": file_path, "caption": caption or ""},
@@ -860,7 +1009,7 @@ class ZaloAdapter(BasePlatformAdapter):
         return await self.send_document(chat_id, video_path, caption=caption, metadata=metadata)
 
     async def send_voice(self, chat_id, audio_path, caption=None, reply_to=None, metadata=None, **kwargs):
-        thread_type = self._thread_type_from_chat_id(chat_id, metadata)
+        chat_id, thread_type = await self._target(chat_id, metadata)
         if str(audio_path).startswith(("http://", "https://")):
             # A public m4a URL → real voice bubble via zca-js sendVoice.
             res = await self._post(
@@ -881,14 +1030,15 @@ class ZaloAdapter(BasePlatformAdapter):
         return SendResult(success=True)
 
     async def get_chat_info(self, chat_id: str) -> Dict[str, Any]:
-        kind = "group" if self._thread_types.get(str(chat_id)) == "group" else "dm"
-        return {"name": str(chat_id), "type": kind, "chat_id": str(chat_id)}
+        if await self._resolve_thread_type(chat_id) == "group":
+            return {"name": await self._group_name(chat_id), "type": "group", "chat_id": str(chat_id)}
+        return {"name": str(chat_id), "type": "dm", "chat_id": str(chat_id)}
 
     # ── Extended Zalo actions (for agent tools / direct use) ────────────────
 
     async def react(self, chat_id, msg_id, icon="HEART", cli_msg_id=None, thread_type=None):
         """React to a message. icon = HEART/LIKE/HAHA/WOW/CRY/ANGRY/… or raw."""
-        tt = thread_type or self._thread_types.get(str(chat_id), "user")
+        tt = thread_type or await self._resolve_thread_type(chat_id)
         return await self._post("/react", {
             "threadId": chat_id, "threadType": tt,
             "msgId": str(msg_id), "cliMsgId": str(cli_msg_id or msg_id), "icon": icon,
@@ -896,7 +1046,7 @@ class ZaloAdapter(BasePlatformAdapter):
 
     async def undo(self, chat_id, msg_id, cli_msg_id=None, thread_type=None):
         """Recall/undo one of our own messages."""
-        tt = thread_type or self._thread_types.get(str(chat_id), "user")
+        tt = thread_type or await self._resolve_thread_type(chat_id)
         return await self._post("/undo", {
             "threadId": chat_id, "threadType": tt,
             "msgId": str(msg_id), "cliMsgId": str(cli_msg_id or msg_id),
@@ -904,7 +1054,7 @@ class ZaloAdapter(BasePlatformAdapter):
 
     async def reply(self, chat_id, text, quote, thread_type=None):
         """Send a text reply quoting a prior message (quote = SendMessageQuote)."""
-        tt = thread_type or self._thread_types.get(str(chat_id), "user")
+        tt = thread_type or await self._resolve_thread_type(chat_id)
         return await self._post("/send", {
             "threadId": chat_id, "threadType": tt, "text": text, "quote": quote,
         })
@@ -916,7 +1066,7 @@ class ZaloAdapter(BasePlatformAdapter):
         })
 
     async def send_card(self, chat_id, user_id, phone_number=None, thread_type=None):
-        tt = thread_type or self._thread_types.get(str(chat_id), "user")
+        tt = thread_type or await self._resolve_thread_type(chat_id)
         body = {"threadId": chat_id, "threadType": tt, "userId": str(user_id)}
         if phone_number:
             body["phoneNumber"] = str(phone_number)
@@ -1532,6 +1682,36 @@ def interactive_setup() -> None:
     print_info("─────────────────────────────────────────────")
 
 
+async def _standalone_send(pconfig, chat_id, message, *, thread_id=None, media_files=None,
+                           force_document=False, caption=None, **_kwargs) -> Dict[str, Any]:
+    """Send without a running gateway (`hermes send`, out-of-process cron):
+    a short-lived adapter talks to the bridge directly. media_files is a list
+    of (path, is_voice) pairs."""
+    del thread_id, force_document
+    import aiohttp
+
+    adapter = ZaloAdapter(pconfig)
+    adapter._session = aiohttp.ClientSession()
+    try:
+        message_id = None
+        if message and str(message).strip():
+            res = await adapter.send(str(chat_id), str(message))
+            if not res.success:
+                return {"error": res.error}
+            message_id = res.message_id
+        for i, (path, is_voice) in enumerate(media_files or []):
+            first_caption = caption if i == 0 else None
+            if is_voice:
+                res = await adapter.send_voice(str(chat_id), path, caption=first_caption)
+            else:
+                res = await adapter.send_document(str(chat_id), path, caption=first_caption)
+            if not res.success:
+                return {"error": res.error}
+        return {"success": True, "message_id": message_id}
+    finally:
+        await adapter._close_session()
+
+
 def is_connected() -> bool:
     """Lightweight check used by `hermes gateway status` (env-only)."""
     return bool(os.getenv("ZALO_PLUGIN_URL"))
@@ -1550,6 +1730,8 @@ def register(ctx):
         setup_fn=interactive_setup,
         env_enablement_fn=_env_enablement,
         cron_deliver_env_var="ZALO_HOME_CHANNEL",
+        standalone_sender_fn=_standalone_send,
+        parse_target_ref_fn=_parse_target_ref,
         allowed_users_env="ZALO_ALLOWED_USERS",
         allow_all_env="ZALO_ALLOW_ALL_USERS",
         max_message_length=4000,

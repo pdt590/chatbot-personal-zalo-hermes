@@ -37,6 +37,14 @@ optional_env:
     description: "In groups, when the bot responds: 'mention' (only when @mentioned or replied-to, default), 'all' (every message in allowed groups), or 'off' (DM only)."
     prompt: "Group mode (mention/all/off)"
     password: false
+  - name: ZALO_GROUP_TRIGGERS
+    description: "In 'mention' mode, extra comma-separated words that address the bot when a group message starts with them (e.g. bot,hermes). The bot's Zalo display name always works. Default empty."
+    prompt: "Extra group trigger words (comma-separated, optional)"
+    password: false
+  - name: ZALO_REPLY_QUOTE
+    description: "Whether the bot's answer quotes the message it replies to: 'group' (groups only, default), 'all', or 'off'."
+    prompt: "Quote the asked message in replies (group/all/off)"
+    password: false
   - name: ZALO_LOG_IDS
     description: "Log sender uid + threadId of every inbound message so you can discover IDs to add to allowlists. Default false."
     prompt: "Log inbound IDs? (true/false)"
