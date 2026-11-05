@@ -49,9 +49,9 @@ git clone https://github.com/pdt590/chatbot-personal-zalo-hermes.git
 cd chatbot-personal-zalo-hermes
 
 # 2. Cài đặt: thư viện → đăng nhập QR → service chạy nền → adapter cho Hermes.
-./install.sh                         # Windows: .\install.ps1
-# …hoặc cài vào một profile Hermes có tên:
-./install.sh --profile <name>
+node bin/cli.mjs setup
+# …hoặc cài vào các profile Hermes có tên (cách nhau bằng dấu phẩy):
+node bin/cli.mjs setup --profile <name>
 
 # 3. Kết nối với Hermes (thêm -p <name> nếu dùng profile có tên).
 hermes gateway setup                 # chọn "Zalo": người dùng, nhóm, quyền
@@ -62,20 +62,10 @@ Phần còn lại giải thích từng tuỳ chọn. Nếu mặc định đã ph
 
 ## Cài đặt
 
-### Các cách chạy trình cài đặt
+### Chạy trình cài đặt
 
-Các lệnh dưới đây đều chạy cùng một trình cài đặt (`install.mjs`) và nhận cùng
-[tuỳ chọn](#tuỳ-chọn-cài-đặt):
-
-| Lệnh                                     | Khi nào dùng                                                      |
-| ---------------------------------------- | ----------------------------------------------------------------- |
-| `./install.sh [tuỳ chọn]`                | macOS / Linux, từ bản git clone.                                  |
-| `.\install.ps1 [tuỳ chọn]`               | Windows PowerShell, từ bản git clone.                             |
-| `node install.mjs [tuỳ chọn]`            | Mọi hệ điều hành, từ bản git clone.                               |
-| `node bin/cli.mjs setup [tuỳ chọn]`      | Như trên, qua [CLI](#lệnh-cli).                                   |
-
-Trên Windows, nếu PowerShell chặn script, chạy trước
-`Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`.
+Chạy từ bản git clone, trên mọi hệ điều hành: `node bin/cli.mjs setup [tuỳ chọn]`
+(xem [tuỳ chọn](#tuỳ-chọn-cài-đặt) và các [lệnh CLI](#lệnh-cli) khác).
 
 **Chạy lại an toàn:** thư viện chỉ cài khi còn thiếu, bước quét QR được bỏ qua khi
 phiên đã lưu còn hiệu lực, service được đăng ký lại và khởi động lại với mã mới,
@@ -85,8 +75,8 @@ file adapter được ghi đè.
 
 | Bước | Việc làm                                                                                                        | Bỏ qua khi             |
 | ---- | --------------------------------------------------------------------------------------------------------------- | ---------------------- |
-| 0    | Kiểm tra Node ≥ 18 và `npm`, xác định [profile Hermes](#chọn-profile-hermes).                                    | —                      |
-| 1    | `npm install` nếu thiếu `node_modules/zca-js`.                                | `--service-only`       |
+| 0    | Kiểm tra Node ≥ 18, xác định [profile Hermes](#chọn-profile-hermes).                                             | —                      |
+| 1    | `npm install` nếu thiếu `node_modules/zca-js` (cần `npm` trong PATH).         | `--service-only`       |
 | 2    | Đăng nhập Zalo bằng QR (dùng lại phiên đã lưu nếu còn chạy).                                                    | `--service-only`       |
 | 3    | Đăng ký bridge thành service chạy nền: systemd user unit (Linux), launchd agent (macOS), Scheduled Task khi đăng nhập (Windows). | `--no-service` |
 | 4    | Chép adapter Python vào `<profile>/plugins/zalo`, thêm `zalo-platform` vào `plugins.enabled` và toolset của plugin vào `platform_toolsets.zalo` trong `<profile>/config.yaml`. | không có profile mặc định |
@@ -97,7 +87,8 @@ file adapter được ghi đè.
 ### Chọn profile Hermes
 
 Hermes có thể chạy nhiều profile độc lập (`hermes profile list`). Adapter và hook
-được cài vào **một** profile, chọn bằng **tên** profile. Trình cài đặt đổi tên thành
+được cài vào các profile bạn chọn bằng **tên**; nhiều profile thì cách nhau bằng dấu
+phẩy (`--profile default,work`). Trình cài đặt đổi tên thành
 thư mục theo đúng cách `hermes -p <name>` làm:
 
 | Tên profile | Thư mục (macOS / Linux)     | Thư mục (Windows)                        |
@@ -111,9 +102,9 @@ Nơi cài được lấy từ nguồn đầu tiên có giá trị:
 | - | -------------------------------- | ---------------------------------------- | --------------------------------------------------------------- |
 | 1 | `--profile <name>` / `-p <name>` | `--profile work`, `-p=work`              | Nên dùng.                                                       |
 | 2 | `--hermes-home <path>`           | `--hermes-home /srv/hermes/work`         | Thư mục cụ thể. Không dùng chung với `--profile`.               |
-| 3 | Biến `HERMES_PROFILE`            | `HERMES_PROFILE=work ./install.sh`       | Giống `--profile`.                                              |
-| 4 | Biến `HERMES_HOME`               | `HERMES_HOME=/srv/hermes ./install.sh`   | Thư mục cụ thể.                                                 |
-| 5 | không có gì                      | `./install.sh`                           | Profile `default`, **chỉ khi thư mục đã tồn tại**.              |
+| 3 | Biến `HERMES_PROFILE`            | `HERMES_PROFILE=work node bin/cli.mjs setup`       | Giống `--profile`.                                              |
+| 4 | Biến `HERMES_HOME`               | `HERMES_HOME=/srv/hermes node bin/cli.mjs setup`   | Thư mục cụ thể.                                                 |
+| 5 | không có gì                      | `node bin/cli.mjs setup`                           | Profile `default`, **chỉ khi thư mục đã tồn tại**.              |
 
 Quy tắc:
 
@@ -135,10 +126,10 @@ Quy tắc:
 
 | Tuỳ chọn                  | Giá trị                             | Tác dụng                                                                                                 |
 | ------------------------- | ----------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| `-p`, `--profile`         | tên profile                         | Profile Hermes để cài adapter (và hook). Xem [ở trên](#chọn-profile-hermes).                             |
+| `-p`, `--profile`         | tên profile: `work` hoặc `default,work` | Các profile Hermes để cài adapter (và hook). Xem [ở trên](#chọn-profile-hermes).                     |
 | `--hermes-home`           | thư mục                             | Nâng cao: cài vào thư mục này thay vì theo tên profile. `~` được mở rộng.                                |
 | `--service-only`          | —                                   | Chỉ bước 3–5: cài (lại) service và adapter. Không cài thư viện, không đăng nhập. Dùng sau khi cập nhật. |
-| `--no-service`            | —                                   | Bỏ bước 3. Tự chạy bridge bằng `node bin/cli.mjs start` / `npm start`.                                 |
+| `--no-service`            | —                                   | Bỏ bước 3. Tự chạy bridge bằng `node bin/cli.mjs start`.                                               |
 | `--relogin` (`--force`)   | —                                   | Bắt buộc quét QR lại. Service đang chạy sẽ được dừng trước và khởi động lại sau đó.                      |
 | `--with-hook`             | —                                   | Cài thêm hook kiểm soát tool (chưa đặt chủ bot thì mọi người dùng Zalo bị chặn mọi tool).                |
 | `--hook-owner`            | danh sách uid: `123` hoặc `123,456` | Cài hook và ghi `ZALO_HOOK_OWNERS` vào `<profile>/.env`. Chỉ chữ số, cách nhau bằng dấu phẩy.            |
@@ -170,43 +161,45 @@ chạy nền dùng đúng các vị trí đó. Hãy đặt lại chúng mỗi l�
 
 ```bash
 # Profile mặc định (~/.hermes), cài đầy đủ
-./install.sh
+node bin/cli.mjs setup
 
 # Một profile có tên
 hermes profile create work                    # chỉ khi chưa có
-./install.sh --profile work
+node bin/cli.mjs setup --profile work
 hermes -p work gateway setup
 
 # Như trên, qua biến môi trường
-HERMES_PROFILE=work ./install.sh
+HERMES_PROFILE=work node bin/cli.mjs setup
 
 # Thêm adapter vào profile thứ hai (bridge và đăng nhập đã có)
-./install.sh --service-only --profile lily
+node bin/cli.mjs setup --service-only --profile lily
+
+# Nhiều profile trong một lần chạy
+node bin/cli.mjs setup --profile default,work,lily
 
 # Hook với chủ bot được dùng mọi tool trong chat 1-1
-./install.sh --service-only --profile work --hook-owner 1234567890 --hook-mode full-dm
+node bin/cli.mjs setup --service-only --profile work --hook-owner 1234567890 --hook-mode full-dm
 
 # Đăng nhập lại bằng QR mới (vd. sau khi phiên bị hỏng)
-./install.sh --relogin
+node bin/cli.mjs setup --relogin
 
 # Không cài service chạy nền: tự chạy bridge trong terminal
-./install.sh --no-service --profile work
+node bin/cli.mjs setup --no-service --profile work
 node bin/cli.mjs start
 
 # Đặt dữ liệu bridge ở chỗ khác
-ZALO_DATA_DIR=/srv/zalo ./install.sh --profile work
+ZALO_DATA_DIR=/srv/zalo node bin/cli.mjs setup --profile work
 
 # Docker / thư mục gốc riêng: profile nằm trong $HERMES_HOME/profiles
-HERMES_HOME=/opt/data ./install.sh --profile work   # → /opt/data/profiles/work
+HERMES_HOME=/opt/data node bin/cli.mjs setup --profile work  # → /opt/data/profiles/work
 
 # Thư mục cụ thể không phải profile chuẩn
-./install.sh --hermes-home ~/hermes-test
+node bin/cli.mjs setup --hermes-home ~/hermes-test
 ```
 
 ```powershell
-# Windows
-.\install.ps1 --profile work
-$env:HERMES_PROFILE = "work"; .\install.ps1
+# Windows (PowerShell)
+$env:HERMES_PROFILE = "work"; node bin/cli.mjs setup
 ```
 
 ### Vị trí các thành phần đã cài
@@ -231,7 +224,7 @@ profile có **bản adapter riêng**.
 
 ```bash
 git pull && npm install
-./install.sh --service-only --profile <name>    # lặp lại cho mọi profile có adapter
+node bin/cli.mjs setup --service-only --profile <name>[,<name>…]  # mọi profile có adapter
 hermes -p <name> gateway restart                # profile mặc định: hermes gateway restart
 ```
 
@@ -242,18 +235,13 @@ Bỏ `--profile` nếu dùng profile mặc định. Nếu lúc cài có dùng bi
 
 ### Lệnh
 
-| Lệnh                                       | Khi nào dùng                           |
-| ------------------------------------------ | -------------------------------------- |
-| `./uninstall.sh [tuỳ chọn]`                | macOS / Linux, từ bản git clone.       |
-| `.\uninstall.ps1 [tuỳ chọn]`               | Windows PowerShell.                    |
-| `node uninstall.mjs [tuỳ chọn]`            | Mọi hệ điều hành.                      |
-| `node bin/cli.mjs uninstall [tuỳ chọn]`    | Như trên, qua [CLI](#lệnh-cli).        |
+Chạy từ bản git clone, trên mọi hệ điều hành: `node bin/cli.mjs uninstall [tuỳ chọn]`.
 
 ### Tuỳ chọn gỡ cài đặt
 
 | Tuỳ chọn / biến                          | Giá trị         | Tác dụng                                                                          |
 | ---------------------------------------- | --------------- | --------------------------------------------------------------------------------- |
-| `-p`, `--profile`                        | tên profile     | Gỡ adapter và hook khỏi profile này. Quy tắc giống lúc cài.                       |
+| `-p`, `--profile`                        | tên profile     | Gỡ adapter và hook khỏi các profile này (cách nhau bằng dấu phẩy). Quy tắc giống lúc cài. |
 | `--hermes-home`                          | thư mục         | Gỡ khỏi thư mục này.                                                              |
 | `HERMES_PROFILE` / `HERMES_HOME`         | biến môi trường | Như trên, ưu tiên thấp hơn tuỳ chọn dòng lệnh.                                    |
 | `--purge`                                | —               | Xoá cả đăng nhập Zalo đã lưu (`credentials.json`). Lần cài sau sẽ hiện QR.        |
@@ -276,29 +264,23 @@ Gỡ cài đặt luôn gỡ **service** cùng với adapter của profile đư�
 khỏi một profile nhưng giữ ở profile khác, hãy gỡ rồi cài lại cho profile cần giữ:
 
 ```bash
-./uninstall.sh --profile work
-./install.sh --service-only --profile lily
+node bin/cli.mjs uninstall --profile work
+node bin/cli.mjs setup --service-only --profile lily
 ```
 
 ### Ví dụ gỡ cài đặt
 
 ```bash
-./uninstall.sh                                  # profile mặc định, giữ đăng nhập
-./uninstall.sh --profile work                   # profile có tên
-HERMES_PROFILE=work ./uninstall.sh              # như trên, qua biến môi trường
-./uninstall.sh --profile work --purge           # đăng xuất luôn (xoá credentials)
+node bin/cli.mjs uninstall                      # profile mặc định, giữ đăng nhập
+node bin/cli.mjs uninstall --profile work       # profile có tên
+HERMES_PROFILE=work node bin/cli.mjs uninstall  # như trên, qua biến môi trường
+node bin/cli.mjs uninstall --profile work --purge  # đăng xuất luôn (xoá credentials)
 
 # Gỡ sạch hoàn toàn
-./uninstall.sh --profile work --purge
-./uninstall.sh --profile lily                   # mọi profile khác từng có adapter
+node bin/cli.mjs uninstall --profile work,lily --purge  # mọi profile từng có adapter
 rm -rf ~/.hermes-zalo                           # dữ liệu bridge
 rm -rf /đường/dẫn/tới/bản/git/clone            # mã bridge
 hermes -p work gateway restart
-```
-
-```powershell
-# Windows
-.\uninstall.ps1 --profile work --purge
 ```
 
 Sau đó khởi động lại `hermes gateway` của từng profile bị ảnh hưởng.
@@ -425,12 +407,12 @@ hai file dưới đây.
 Zalo có thể kích hoạt. Người thường không có tool nào; chủ bot mặc định chỉ có tool đọc.
 
 ```bash
-./install.sh --profile <name> --hook-owner <uid>   # hoặc --with-hook
+node bin/cli.mjs setup --profile <name> --hook-owner <uid>  # hoặc --with-hook
 ```
 
 Trình cài đặt chép script vào `<profile>/agent-hooks/`, đăng ký nó trong
 `hooks.pre_tool_call` của `config.yaml`, và ghi cấu hình chủ bot vào
-`<profile>/.env`. `./uninstall.sh --profile <name>` gỡ script và mục đăng ký (giữ
+`<profile>/.env`. `node bin/cli.mjs uninstall --profile <name>` gỡ script và mục đăng ký (giữ
 lại các biến `ZALO_HOOK_*`). Nếu không đặt chủ bot, mọi người dùng Zalo đều bị chặn
 mọi tool.
 
@@ -470,7 +452,7 @@ bị chặn. `<name>` là profile Hermes và `P` là thư mục của nó, vd.
 1. Cài hook ở chế độ `full-dm`:
 
    ```bash
-   ./install.sh --service-only --profile <name> --hook-owner <uid> --hook-mode full-dm
+   node bin/cli.mjs setup --service-only --profile <name> --hook-owner <uid> --hook-mode full-dm
    ```
 
 2. `$P/config.yaml`:
@@ -526,10 +508,10 @@ Bridge lắng nghe ở `127.0.0.1:8787`. Nếu có token, gửi qua header `x-br
 | `use either --profile or --hermes-home, not both`        | Chỉ giữ một trong hai.                                                                              |
 | `Hermes home not found at …/.hermes`, bỏ qua adapter     | Chưa có profile mặc định. Truyền `--profile <name>`, hoặc cài Hermes rồi chạy lại `--service-only`. |
 | Không thấy Zalo trong `hermes gateway setup`             | Adapter đã vào profile khác: xem dòng `Hermes profile: …` và chạy lại với đúng `--profile`.         |
-| `loggedIn=false` hoặc `sessionDead`                      | `node bin/cli.mjs login`; nếu cookie đã hỏng, `./install.sh --relogin`.                           |
+| `loggedIn=false` hoặc `sessionDead`                      | `node bin/cli.mjs login`; nếu cookie đã hỏng, `node bin/cli.mjs setup --relogin`.                           |
 | Phiên bị ngắt với mã 3000                                | Đang mở Zalo Web hoặc bridge khác. Đóng nó, rồi `login`.                                            |
-| `Bridge: NOT running`                                    | `node bin/cli.mjs restart`, hoặc `./install.sh --service-only` nếu chưa từng cài service.         |
-| Service hỏng sau khi nâng cấp Node hoặc chuyển thư mục   | Chạy lại `./install.sh --service-only` từ thư mục hiện tại.                                         |
+| `Bridge: NOT running`                                    | `node bin/cli.mjs restart`, hoặc `node bin/cli.mjs setup --service-only` nếu chưa từng cài service.         |
+| Service hỏng sau khi nâng cấp Node hoặc chuyển thư mục   | Chạy lại `node bin/cli.mjs setup --service-only` từ thư mục hiện tại.                                         |
 | "I don't recognize you"                                  | Đặt `ZALO_ALLOWED_USERS` hoặc `ZALO_ALLOW_ALL_USERS=true` (chạy lại `hermes gateway setup`).        |
 | Bot bỏ qua một nhóm                                      | Chưa @nhắc bot, nhóm không có trong `ZALO_ALLOWED_THREADS`, hoặc `ZALO_GROUP_MODE=off`.             |
 | HTTP 403                                                 | Bị chính sách chặn. Nới quyền trong `bridge.env`, rồi `restart`.                                    |
@@ -547,14 +529,14 @@ Bridge lắng nghe ở `127.0.0.1:8787`. Nếu có token, gửi qua header `x-br
 npm install
 npm test                                             # test Node
 python -m unittest discover -s test -p "test_*.py"   # test adapter
-ZALO_DATA_DIR=./data node login.mjs && npm start     # chạy cục bộ tách biệt
+ZALO_DATA_DIR=./data node bin/cli.mjs login && npm start   # chạy cục bộ tách biệt
 ```
 
 Chạy cục bộ cùng tài khoản với service sẽ đá phiên của service; dừng service trước
 (`node bin/cli.mjs stop`).
 
 **Phát hành** (thủ công, không có CI): `npm test` → `npm version patch|minor|major` →
-`npm publish` → `git push --follow-tags`.
+`git push --follow-tags`. Package để private: người dùng cài từ bản git clone.
 
 ## Giấy phép
 

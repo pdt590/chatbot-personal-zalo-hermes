@@ -1,30 +1,33 @@
 // install.mjs — one-shot, cross-platform installer for the Hermes Zalo plugin.
 // Runs the same on macOS, Linux, and Windows (Node drives everything; only the
-// service-manager step branches per-OS).
+// service-manager step branches per-OS). Run it through the CLI:
 //
-//   node install.mjs                 # full setup: deps → login → background service
-//   node install.mjs --no-service    # deps → login only (run `npm start` yourself)
-//   node install.mjs --relogin       # force a fresh QR login
-//   node install.mjs --service-only  # (re)install just the background service
-//   node install.mjs --profile <name> # install the adapter into this Hermes profile
-//                                    # (~/.hermes/profiles/<name>; "default" = ~/.hermes)
-//   node install.mjs --hermes-home <dir>  # advanced: an explicit Hermes home directory
-//   node install.mjs --with-hook     # also install the tool-access hook
-//   node install.mjs --hook-owner <uid> [--hook-mode read|full-dm|full]
-//                                    # hook + owner settings in the profile .env
+//   node bin/cli.mjs setup                  # full setup: deps → login → background service
+//   node bin/cli.mjs setup --no-service     # deps → login only (run `start` yourself)
+//   node bin/cli.mjs setup --relogin        # force a fresh QR login
+//   node bin/cli.mjs setup --service-only   # (re)install just the service + adapter
+//   node bin/cli.mjs setup --profile <name>[,<name>…]
+//                                           # install the adapter into these Hermes profiles
+//                                           # (~/.hermes/profiles/<name>; "default" = ~/.hermes)
+//   node bin/cli.mjs setup --hermes-home <dir>   # advanced: an explicit Hermes home directory
+//   node bin/cli.mjs setup --with-hook      # also install the tool-access hook
+//   node bin/cli.mjs setup --hook-owner <uid> [--hook-mode read|full-dm|full]
+//                                           # hook + owner settings in the profile .env
 //
 // After this, the end-user only needs:  hermes gateway setup  → choose Zalo.
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { dataDir, hermesHomeSourceLabel, logDir, resolveHermesHome } from "./paths.js";
-import { restartService, serviceInstalled, stopService } from "./service.js";
+import { hermesHomeSourceLabel, logDir, resolveHermesHomes } from "./paths.js";
 import {
-  HOOK_FILE, addPreToolHook, enablePlatformToolsets, readProvidedToolsets, setEnvVar,
+  LABEL, WIN_TASK, plistPath, restartService, serviceInstalled, stopService, unitPath, winLauncherPath,
+} from "./service.js";
+import {
+  HOOK_FILE, addPreToolHook, enablePlatformToolsets, enablePluginInConfig, readProvidedToolsets, setEnvVar,
 } from "./hermesConfig.js";
+import { CLI, banner } from "./ui.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
@@ -56,22 +59,23 @@ if (HOOK_MODE != null && !["read", "full-dm", "full"].includes(HOOK_MODE)) {
 
 const PLATFORM = process.platform; // 'darwin' | 'linux' | 'win32'
 
-// Where the Hermes adapter goes. Resolved up front so a typo in --profile
-// fails before the QR login and service steps.
-let HERMES_HOME_TARGET;
+// Where the Hermes adapter goes (one or more profiles). Resolved up front so a
+// typo in --profile fails before the QR login and service steps.
+let HERMES_HOMES;
 try {
-  HERMES_HOME_TARGET = resolveHermesHome(argv);
+  HERMES_HOMES = resolveHermesHomes(argv);
 } catch (e) {
   die(e.message);
 }
 // A named profile is created by Hermes (it seeds config, .env, skills…); a
 // missing one is almost always a typo, so stop instead of inventing it.
-if ((HERMES_HOME_TARGET.source === "profile" || HERMES_HOME_TARGET.source === "env-profile")
-    && HERMES_HOME_TARGET.profile !== "default" && !fs.existsSync(HERMES_HOME_TARGET.dir)) {
-  const p = HERMES_HOME_TARGET.profile;
-  die(`Hermes profile '${p}' not found at ${HERMES_HOME_TARGET.dir}.\n` +
-    `  Create it first:  hermes profile create ${p}\n` +
-    "  (list existing ones with: hermes profile list)");
+for (const home of HERMES_HOMES) {
+  if ((home.source === "profile" || home.source === "env-profile")
+      && home.profile !== "default" && !fs.existsSync(home.dir)) {
+    die(`Hermes profile '${home.profile}' not found at ${home.dir}.\n` +
+      `  Create it first:  hermes profile create ${home.profile}\n` +
+      "  (list existing ones with: hermes profile list)");
+  }
 }
 
 // The service must outlive Node upgrades. process.execPath often points into a
@@ -93,7 +97,7 @@ function stableNodeBin(exe = process.execPath) {
 }
 const NODE_BIN = stableNodeBin();
 const SERVER_JS = path.join(__dirname, "server.js");
-const LABEL = "com.hermes.zaloplugin";
+const CLI_JS = path.join(__dirname, "bin", "cli.mjs");
 
 // Data-location overrides the user ran setup with. The service manager starts
 // the bridge with a clean environment, so without these it would look for
@@ -136,33 +140,27 @@ function checkPrereqs() {
     );
   }
   log(`✓ Node ${process.version}`);
-
-  // npm must be on PATH (it ships with Node, but some minimal installs strip it)
-  const npmCmd = PLATFORM === "win32" ? "npm.cmd" : "npm";
-  const probe = spawnSync(npmCmd, ["--version"], { stdio: "ignore", shell: PLATFORM === "win32" });
-  if (probe.status !== 0) {
-    die(
-      "npm not found on PATH. It normally ships with Node.js.\n" +
-      "  Reinstall Node from https://nodejs.org, or ensure npm is on your PATH."
-    );
-  }
-  log("✓ npm available");
 }
 
 // ── 1. Install dependencies (pulls zca-js from npm — no build, no bun) ───────
 function installDeps() {
-  // When installed as an npm package (global or npx), deps are already present —
-  // skip. Only run `npm install` from a source checkout missing node_modules.
-  const haveDeps = fs.existsSync(path.join(__dirname, "node_modules", "zca-js"));
-  if (haveDeps) {
+  // Only run `npm install` when the checkout is missing node_modules.
+  if (fs.existsSync(path.join(__dirname, "node_modules", "zca-js"))) {
     log("✓ Dependencies already present (skipping npm install)");
     return;
   }
   step(1, "Installing dependencies (npm install)…");
   // npm is cross-platform; on Windows the shell needs npm.cmd via shell:true.
-  run(PLATFORM === "win32" ? "npm.cmd" : "npm", ["install", "--no-audit", "--no-fund"], {
-    shell: PLATFORM === "win32",
-  });
+  const npmCmd = PLATFORM === "win32" ? "npm.cmd" : "npm";
+  const shell = PLATFORM === "win32";
+  // npm ships with Node, but some minimal installs strip it.
+  if (spawnSync(npmCmd, ["--version"], { stdio: "ignore", shell }).status !== 0) {
+    die(
+      "npm not found on PATH. It normally ships with Node.js.\n" +
+      "  Reinstall Node from https://nodejs.org, or ensure npm is on your PATH."
+    );
+  }
+  run(npmCmd, ["install", "--no-audit", "--no-fund"], { shell });
   log("✓ Dependencies installed");
 }
 
@@ -179,15 +177,14 @@ function login({ restartOnFailure = false } = {}) {
   if (r.status !== 0) {
     // Don't leave the user with no bridge at all: bring the old one back.
     if (restartOnFailure) restartService();
-    die("Zalo login failed (see above). Re-run: hermes-zalo-plugin setup --relogin");
+    die(`Zalo login failed (see above). Re-run: ${CLI} setup --relogin`);
   }
 }
 
 // ── 3. Background service (per-OS) ───────────────────────────────────────────
 function installServiceDarwin() {
-  const plistDir = path.join(os.homedir(), "Library", "LaunchAgents");
-  fs.mkdirSync(plistDir, { recursive: true });
-  const plistPath = path.join(plistDir, `${LABEL}.plist`);
+  const plist = plistPath();
+  fs.mkdirSync(path.dirname(plist), { recursive: true });
   const logs = logDir();
   fs.mkdirSync(logs, { recursive: true });
   const env = Object.entries(serviceEnv());
@@ -198,7 +195,7 @@ ${env.map(([k, v]) => `    <key>${k}</key><string>${xmlEscape(v)}</string>`).joi
   </dict>
 `
     : "";
-  const plist = `<?xml version="1.0" encoding="UTF-8"?>
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
@@ -216,19 +213,18 @@ ${envXml}  <key>StandardOutPath</key><string>${path.join(logs, "bridge.out.log")
 </dict>
 </plist>
 `;
-  fs.writeFileSync(plistPath, plist);
+  fs.writeFileSync(plist, xml);
   // reload (ignore failures if not yet loaded)
-  spawnSync("launchctl", ["unload", plistPath], { stdio: "ignore" });
-  // `load` starts it (RunAtLoad); after a package update this also picks up new code.
-  run("launchctl", ["load", plistPath]);
-  log(`✓ launchd service installed: ${plistPath}`);
+  spawnSync("launchctl", ["unload", plist], { stdio: "ignore" });
+  // `load` starts it (RunAtLoad) and picks up the new plist and code.
+  run("launchctl", ["load", plist]);
+  log(`✓ launchd service installed: ${plist}`);
   log("  Manage: launchctl unload/load the plist above.");
 }
 
 function installServiceLinux() {
-  const unitDir = path.join(os.homedir(), ".config", "systemd", "user");
-  fs.mkdirSync(unitDir, { recursive: true });
-  const unitPath = path.join(unitDir, `${LABEL}.service`);
+  const unitFile = unitPath();
+  fs.mkdirSync(path.dirname(unitFile), { recursive: true });
   const unit = `[Unit]
 Description=Hermes Zalo Plugin
 After=network-online.target
@@ -243,24 +239,23 @@ RestartSec=5
 [Install]
 WantedBy=default.target
 `;
-  fs.writeFileSync(unitPath, unit);
+  fs.writeFileSync(unitFile, unit);
   const sysctl = (args) => spawnSync("systemctl", ["--user", ...args], { stdio: "inherit" });
   if (spawnSync("systemctl", ["--version"], { stdio: "ignore" }).status !== 0) {
-    log(`⚠ systemd not available. Unit written to ${unitPath}; start the bridge manually with: npm start`);
+    log(`⚠ systemd not available. Unit written to ${unitFile}; start the bridge manually with: ${CLI} start`);
     return;
   }
   sysctl(["daemon-reload"]);
-  // enable + restart (not `enable --now`): on a re-run after a package update
-  // an already-running bridge must be restarted to load the new code.
-  const ok = sysctl(["enable", `${LABEL}.service`]).status === 0
-    && sysctl(["restart", `${LABEL}.service`]).status === 0;
+  // enable + restart (not `enable --now`): on a re-run after an update an
+  // already-running bridge must be restarted to load the new code.
+  const ok = sysctl(["enable", `${LABEL}.service`]).status === 0 && restartService().ok;
   if (!ok) {
-    log(`⚠ Unit written to ${unitPath}, but systemd --user could not start it.`);
+    log(`⚠ Unit written to ${unitFile}, but systemd --user could not start it.`);
     log("  (Common over SSH without a user session: run `loginctl enable-linger $USER` and re-login.)");
-    log("  Start the bridge manually meanwhile: hermes-zalo-plugin start");
+    log(`  Start the bridge manually meanwhile: ${CLI} start`);
     return;
   }
-  log(`✓ systemd user service installed & started: ${unitPath}`);
+  log(`✓ systemd user service installed & started: ${unitFile}`);
   log(`  Manage: systemctl --user status/restart/stop ${LABEL}`);
   log("  Tip: run `loginctl enable-linger $USER` so it runs without an active login session.");
 }
@@ -268,12 +263,11 @@ WantedBy=default.target
 function installServiceWindows() {
   // Scheduled Task that runs at logon (no auto-restart on crash). Avoids needing
   // nssm/admin service install. Uses schtasks (present on all Windows).
-  const taskName = "HermesZaloPlugin";
   // A tiny launcher sets cwd + data-location env and captures logs (schtasks
   // /TR has none of that and a ~260 char limit).
   const logs = logDir();
   fs.mkdirSync(logs, { recursive: true });
-  const launcher = path.join(dataDir(), "bridge-launcher.cmd");
+  const launcher = winLauncherPath();
   const envLines = Object.entries(serviceEnv()).map(([k, v]) => `set "${k}=${v}"`);
   fs.writeFileSync(launcher, [
     "@echo off",
@@ -286,26 +280,22 @@ function installServiceWindows() {
   const args = [
     "/Create", "/F",
     "/SC", "ONLOGON",
-    "/TN", taskName,
+    "/TN", WIN_TASK,
     "/TR", cmd,
     "/RL", "LIMITED",
   ];
   const r = spawnSync("schtasks", args, { stdio: "inherit", shell: true });
   if (r.status !== 0) {
-    log("⚠ Could not register a Scheduled Task automatically. Start the bridge manually with: npm start");
+    log(`⚠ Could not register a Scheduled Task automatically. Start the bridge manually with: ${CLI} start`);
     log("  Or create a task that runs at logon with command:");
     log(`    ${cmd}`);
     return;
   }
-  log(`✓ Scheduled Task '${taskName}' registered (runs at logon).`);
+  log(`✓ Scheduled Task '${WIN_TASK}' registered (runs at logon).`);
   // Start it now too, otherwise the bridge is down until the next logon.
-  spawnSync("schtasks", ["/End", "/TN", taskName], { stdio: "ignore", shell: true });
-  if (spawnSync("schtasks", ["/Run", "/TN", taskName], { stdio: "ignore", shell: true }).status === 0) {
-    log("✓ Bridge started.");
-  } else {
-    log(`⚠ Could not start it now. Run:  schtasks /Run /TN ${taskName}`);
-  }
-  log(`  Manage:     Task Scheduler → ${taskName}`);
+  if (restartService().ok) log("✓ Bridge started.");
+  else log(`⚠ Could not start it now. Run:  ${CLI} restart`);
+  log(`  Manage:     Task Scheduler → ${WIN_TASK}`);
 }
 
 function installService() {
@@ -313,7 +303,7 @@ function installService() {
   if (PLATFORM === "darwin") return installServiceDarwin();
   if (PLATFORM === "linux") return installServiceLinux();
   if (PLATFORM === "win32") return installServiceWindows();
-  log(`⚠ Unsupported platform '${PLATFORM}' for auto-service. Run the bridge manually: npm start`);
+  log(`⚠ Unsupported platform '${PLATFORM}' for auto-service. Run the bridge manually: ${CLI} start`);
 }
 
 // ── 4. Install the Hermes-side plugin so `hermes gateway` sees Zalo ──────────
@@ -321,14 +311,17 @@ function installService() {
 // adapter lives under hermes-plugin/ in this package; copy it into the user's
 // Hermes plugin dir (<hermes home>/plugins/zalo) and add "zalo" to plugins.enabled
 // so the (untrusted) user plugin is allowed to load.
-function installHermesPlugin() {
+function installHermesPlugins() {
   step(4, "Installing the Hermes plugin (so `hermes gateway` sees Zalo)…");
   const src = path.join(__dirname, "hermes-plugin");
   if (!fs.existsSync(src)) {
-    log("⚠ hermes-plugin/ not found in package — skipping (bridge still works standalone).");
+    log("⚠ hermes-plugin/ not found in the checkout — skipping (bridge still works standalone).");
     return;
   }
-  const home = HERMES_HOME_TARGET;
+  for (const home of HERMES_HOMES) installHermesPlugin(src, home);
+}
+
+function installHermesPlugin(src, home) {
   const hermesHome = home.dir;
   log(`Hermes profile: ${home.profile ?? "(custom)"} → ${hermesHome} (${hermesHomeSourceLabel(home)})`);
   if (!fs.existsSync(hermesHome)) {
@@ -336,7 +329,7 @@ function installHermesPlugin() {
     if (home.source === "default") {
       log(`⚠ Hermes home not found at ${hermesHome}.`);
       log("  Skipping plugin install. Pass --profile <name> for a named Hermes profile,");
-      log("  or install Hermes and re-run: npx hermes-zalo-plugin setup --service-only");
+      log(`  or install Hermes and re-run: ${CLI} setup --service-only`);
       return;
     }
     fs.mkdirSync(hermesHome, { recursive: true });
@@ -351,14 +344,20 @@ function installHermesPlugin() {
   }
   // Drop bytecode left by an older adapter version.
   fs.rmSync(path.join(dest, "__pycache__"), { recursive: true, force: true });
+  // Tell the adapter how to run this checkout's CLI (`hermes gateway setup`
+  // offers to log in / start / restart the bridge).
+  fs.writeFileSync(path.join(dest, "bridge_cli.json"),
+    JSON.stringify({ node: NODE_BIN, cli: CLI_JS }, null, 2) + "\n");
   log(`✓ Plugin copied to ${dest}`);
 
-  // Enable the plugin in config.yaml (plugins.enabled must contain "zalo").
+  // Enable the plugin in config.yaml (plugins.enabled must contain "zalo-platform").
   const cfgPath = path.join(hermesHome, "config.yaml");
   try {
-    const enabled = enableZaloInConfig(cfgPath);
-    log(enabled === "already" ? "✓ Plugin already enabled in config.yaml"
-        : enabled === "added" ? '✓ Added "zalo-platform" to plugins.enabled in config.yaml'
+    const before = fs.existsSync(cfgPath) ? fs.readFileSync(cfgPath, "utf-8") : "";
+    const { text, status } = enablePluginInConfig(before);
+    if (status !== "already") fs.writeFileSync(cfgPath, text);
+    log(status === "already" ? "✓ Plugin already enabled in config.yaml"
+        : status === "added" ? '✓ Added "zalo-platform" to plugins.enabled in config.yaml'
         : '✓ Created plugins.enabled with "zalo-platform" in config.yaml');
   } catch (e) {
     log(`⚠ Could not auto-enable the plugin: ${e.message}`);
@@ -461,64 +460,6 @@ function enablePluginToolsets(cfgPath, pluginYamlPath) {
   }
 }
 
-// Minimal, robust YAML editor for the one thing we need: ensure
-// plugins.enabled contains "zalo". Operates line-by-line to avoid a YAML dep.
-// Returns "already" | "added" | "created".
-function enableZaloInConfig(cfgPath) {
-  const text = fs.existsSync(cfgPath) ? fs.readFileSync(cfgPath, "utf-8") : "";
-  const lines = text.split("\n");
-
-  // Find a top-level "plugins:" line (no leading whitespace).
-  let pluginsIdx = lines.findIndex((l) => /^plugins:\s*$/.test(l));
-  if (pluginsIdx === -1) {
-    // No plugins block — append a fresh one.
-    const sep = text.length && !text.endsWith("\n") ? "\n" : "";
-    fs.writeFileSync(cfgPath, text + sep + "\nplugins:\n  enabled:\n    - zalo-platform\n");
-    return "created";
-  }
-
-  // Within the plugins block, find "enabled:" (2-space indent).
-  let i = pluginsIdx + 1;
-  let enabledIdx = -1;
-  for (; i < lines.length; i++) {
-    if (/^\S/.test(lines[i]) && lines[i].trim() !== "") break; // left the block
-    if (/^\s+enabled:/.test(lines[i])) { enabledIdx = i; break; }
-  }
-
-  if (enabledIdx === -1) {
-    // plugins: exists but no enabled: — insert one right after plugins:.
-    lines.splice(pluginsIdx + 1, 0, "  enabled:", "    - zalo-platform");
-    fs.writeFileSync(cfgPath, lines.join("\n"));
-    return "added";
-  }
-
-  // enabled: may be inline ([a, b]) or a block list. Scan following list items.
-  const inline = lines[enabledIdx].match(/enabled:\s*\[(.*)\]/);
-  if (inline) {
-    if (/(^|[,\s])zalo-platform([,\s]|$)/.test(inline[1])) return "already";
-    const items = inline[1].trim();
-    lines[enabledIdx] = lines[enabledIdx].replace(
-      /enabled:\s*\[.*\]/,
-      `enabled: [${items ? items + ", " : ""}zalo-platform]`,
-    );
-    fs.writeFileSync(cfgPath, lines.join("\n"));
-    return "added";
-  }
-
-  // Block list: check the indented "- " items below enabled:. Track the last
-  // real list item so we insert right after it (not after trailing blanks).
-  let lastItem = enabledIdx;
-  for (let j = enabledIdx + 1; j < lines.length; j++) {
-    if (/^\s*-\s*zalo-platform\s*$/.test(lines[j])) return "already";
-    if (/^\s*-\s/.test(lines[j])) { lastItem = j; continue; }
-    if (lines[j].trim() === "") continue; // skip blank lines within/after the list
-    break; // a non-list, non-blank line ends the list
-  }
-  lines.splice(lastItem + 1, 0, "    - zalo-platform");
-  fs.writeFileSync(cfgPath, lines.join("\n"));
-  return "added";
-}
-
 function nextSteps() {
   const port = process.env.ZALO_PLUGIN_PORT || "8787";
   console.log(`
@@ -538,23 +479,6 @@ or reboot, so you only do the login + setup once.
 `);
 }
 
-function banner() {
-  // ANSI colors only when stdout is a TTY (avoid junk in logs/pipes).
-  const tty = process.stdout.isTTY;
-  const c = (code, s) => (tty ? `\x1b[${code}m${s}\x1b[0m` : s);
-  const blue = (s) => c("38;5;33", s);   // Zalo blue
-  const cyan = (s) => c("36", s);
-  const dim = (s) => c("2", s);
-  console.log(
-    "\n" +
-    blue("  ╦ ╦┌─┐┬─┐┌┬┐┌─┐┌─┐  ") + cyan("╔═╗┌─┐┬  ┌─┐") + "\n" +
-    blue("  ╠═╣├┤ ├┬┘│││├┤ └─┐  ") + cyan("╔═╝├─┤│  │ │") + "\n" +
-    blue("  ╩ ╩└─┘┴└─┴ ┴└─┘└─┘  ") + cyan("╚═╝┴ ┴┴─┘└─┘") + "\n" +
-    dim("  Hermes × Zalo plugin") + "\n" +
-    dim("  chat with your Hermes agent from Zalo") + "\n",
-  );
-}
-
 async function main() {
   banner();
   console.log("Hermes Zalo Plugin — installer");
@@ -564,7 +488,7 @@ async function main() {
 
   if (SERVICE_ONLY) {
     installService();
-    installHermesPlugin();
+    installHermesPlugins();
     nextSteps();
     return;
   }
@@ -584,8 +508,8 @@ async function main() {
     const r = restartService();
     log(r.ok ? "✓ Bridge service started again with the new session." : `⚠ Could not restart the service: ${r.message}`);
   }
-  else log("\n(Skipping background service — run `npm start` to launch the bridge.)");
-  installHermesPlugin();
+  else log(`\n(Skipping background service — run \`${CLI} start\` to launch the bridge.)`);
+  installHermesPlugins();
   nextSteps();
 }
 

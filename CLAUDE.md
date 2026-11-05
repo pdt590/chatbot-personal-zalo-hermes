@@ -13,13 +13,12 @@ Rules:
 
 You may use the Zalo account **Hubplus** (logged in on chat.zalo.me in the opencli-bound Chrome) to chat with the bot **Lily** (bridge `ownId=640788907767712047`, Hermes profile `zalo8806`). Only send test messages to Lily from this account, never to anyone else.
 
-1. Install the build under test and reload everything:
+1. Install the build under test (this checkout) and reload everything:
    ```bash
-   npm pack --pack-destination "$SCRATCH" && npm install -g "$SCRATCH"/hermes-zalo-plugin-<ver>.tgz
-   hermes-zalo-plugin setup --service-only                                        # restart bridge service + copy plugin to ~/.hermes
-   hermes-zalo-plugin setup --service-only --profile zalo8806  # Lily's profile has its OWN plugin copy
+   npm install
+   node bin/cli.mjs setup --service-only --profile zalo8806  # restart bridge service + copy plugin into Lily's profile only
    systemctl --user restart hermes-gateway.service
-   hermes-zalo-plugin status          # expect loggedIn=true ownName=Lily
+   node bin/cli.mjs status            # expect loggedIn=true ownName=Lily
    grep -i zalo ~/.hermes/logs/gateway.log | tail -2   # expect "✓ zalo connected (profile: zalo8806)"
    ```
 2. Open the chat (`opencli doctor` must report `extensionConnected:true`):

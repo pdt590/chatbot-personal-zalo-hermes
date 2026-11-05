@@ -230,3 +230,94 @@ export function setEnvVar(envText, key, value) {
   const sep = text.length && !text.endsWith("\n") ? "\n" : "";
   return { text: `${text}${sep}${line}\n`, changed: true };
 }
+
+// ── plugins.enabled: enable / disable the Zalo adapter plugin ───────────────
+// Line-based edits (no YAML dependency) of the one list we need.
+
+export const PLUGIN_NAME = "zalo-platform";
+
+/**
+ * Ensure plugins.enabled contains "zalo-platform" (inline or block list).
+ * Returns { text, status: "already" | "added" | "created" }.
+ */
+export function enablePluginInConfig(cfgText) {
+  const text = cfgText || "";
+  const lines = text.split("\n");
+
+  // A top-level "plugins:" line (no leading whitespace).
+  const pluginsIdx = lines.findIndex((l) => /^plugins:\s*$/.test(l));
+  if (pluginsIdx === -1) {
+    const sep = text.length && !text.endsWith("\n") ? "\n" : "";
+    return { text: `${text}${sep}\nplugins:\n  enabled:\n    - ${PLUGIN_NAME}\n`, status: "created" };
+  }
+
+  const enabledIdx = findEnabled(lines, pluginsIdx);
+  if (enabledIdx === -1) {
+    // plugins: exists but no enabled: — insert one right after plugins:.
+    lines.splice(pluginsIdx + 1, 0, "  enabled:", `    - ${PLUGIN_NAME}`);
+    return { text: lines.join("\n"), status: "added" };
+  }
+
+  const inline = lines[enabledIdx].match(/enabled:\s*\[(.*)\]/);
+  if (inline) {
+    if (new RegExp(`(^|[,\\s])${PLUGIN_NAME}([,\\s]|$)`).test(inline[1])) return { text, status: "already" };
+    const items = inline[1].trim();
+    lines[enabledIdx] = lines[enabledIdx].replace(
+      /enabled:\s*\[.*\]/,
+      `enabled: [${items ? items + ", " : ""}${PLUGIN_NAME}]`,
+    );
+    return { text: lines.join("\n"), status: "added" };
+  }
+
+  // Block list: insert after the last real item (not after trailing blanks).
+  let lastItem = enabledIdx;
+  for (let j = enabledIdx + 1; j < lines.length; j++) {
+    if (new RegExp(`^\\s*-\\s*['"]?${PLUGIN_NAME}['"]?\\s*$`).test(lines[j])) return { text, status: "already" };
+    if (/^\s*-\s/.test(lines[j])) { lastItem = j; continue; }
+    if (lines[j].trim() === "") continue;
+    break;
+  }
+  lines.splice(lastItem + 1, 0, `    - ${PLUGIN_NAME}`);
+  return { text: lines.join("\n"), status: "added" };
+}
+
+/**
+ * Drop "zalo-platform" from plugins.enabled (inline or block list).
+ * Returns { text, removed }.
+ */
+export function disablePluginInConfig(cfgText) {
+  const text = cfgText || "";
+  const lines = text.split("\n");
+  const pluginsIdx = lines.findIndex((l) => /^plugins:\s*$/.test(l));
+  if (pluginsIdx === -1) return { text, removed: false };
+  const enabledIdx = findEnabled(lines, pluginsIdx);
+  if (enabledIdx === -1) return { text, removed: false };
+
+  const inline = lines[enabledIdx].match(/^(\s*enabled:\s*)\[(.*)\]\s*$/);
+  if (inline) {
+    const items = inline[2].split(",").map((s) => s.trim()).filter(Boolean);
+    const kept = items.filter((s) => s.replace(/^['"]|['"]$/g, "") !== PLUGIN_NAME);
+    if (kept.length === items.length) return { text, removed: false };
+    lines[enabledIdx] = `${inline[1]}[${kept.join(", ")}]`;
+    return { text: lines.join("\n"), removed: true };
+  }
+
+  for (let j = enabledIdx + 1; j < lines.length; j++) {
+    if (new RegExp(`^\\s*-\\s*['"]?${PLUGIN_NAME}['"]?\\s*$`).test(lines[j])) {
+      lines.splice(j, 1);
+      return { text: lines.join("\n"), removed: true };
+    }
+    if (/^\s*-\s/.test(lines[j]) || lines[j].trim() === "") continue;
+    break;
+  }
+  return { text, removed: false };
+}
+
+// Index of "enabled:" inside the top-level plugins: block, or -1.
+function findEnabled(lines, pluginsIdx) {
+  for (let i = pluginsIdx + 1; i < lines.length; i++) {
+    if (/^\S/.test(lines[i]) && lines[i].trim() !== "") return -1; // left the block
+    if (/^\s+enabled:/.test(lines[i])) return i;
+  }
+  return -1;
+}

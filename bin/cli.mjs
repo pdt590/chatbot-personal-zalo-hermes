@@ -1,22 +1,24 @@
 #!/usr/bin/env node
-// bin/cli.mjs — CLI entry point for the hermes-zalo-plugin npm package.
+// bin/cli.mjs — the single entry point of the Hermes Zalo plugin. Run it from
+// the git checkout:
 //
-//   hermes-zalo-plugin setup       # deps already installed by npm; login + service
-//   hermes-zalo-plugin login       # QR login (--force to re-scan)
-//   hermes-zalo-plugin start       # run the bridge in the foreground
-//   hermes-zalo-plugin restart     # restart the background service (reloads bridge.env)
-//   hermes-zalo-plugin stop        # stop the background service (kept installed)
-//   hermes-zalo-plugin status      # show bridge health + where data lives
-//   hermes-zalo-plugin uninstall   # remove background service (--purge to wipe creds)
+//   node bin/cli.mjs setup       # deps → login → service → Hermes adapter
+//   node bin/cli.mjs login       # QR login (--force to re-scan)
+//   node bin/cli.mjs start       # run the bridge in the foreground
+//   node bin/cli.mjs restart     # restart the background service (reloads bridge.env)
+//   node bin/cli.mjs stop        # stop the background service (kept installed)
+//   node bin/cli.mjs status      # show bridge health + where data lives
+//   node bin/cli.mjs uninstall   # remove the service and adapter (--purge to wipe creds)
 //
 // Data (credentials, QR, undo-cache) lives in ~/.hermes-zalo/ by default
-// (override with ZALO_DATA_DIR), so a global install survives package updates.
+// (override with ZALO_DATA_DIR), so it survives `git pull` and re-clones.
 
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { dataDir, bridgeEnvPath, loadBridgeEnv } from "../paths.js";
 import { restartService, serviceInstalled, serviceState, stopService } from "../service.js";
+import { CLI, banner } from "../ui.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
@@ -48,13 +50,13 @@ async function status() {
     );
     if (j.sessionDead || !j.loggedIn) {
       console.log(`  ⚠ not logged in${j.sessionDead ? ` (session dead: ${j.sessionDeadReason || "unknown"})` : ""}.`);
-      console.log("    Fix: hermes-zalo-plugin login   (reuses saved cookie, else shows a QR;");
+      console.log(`    Fix: ${CLI} login   (reuses saved cookie, else shows a QR;`);
       console.log("         the running bridge picks the new session up automatically)");
     }
   } catch {
     console.log(`Bridge: NOT running (no response on http://${host}:${port}).`);
-    if (serviceInstalled()) console.log("  Start it with: hermes-zalo-plugin restart");
-    else console.log("  Start it with: hermes-zalo-plugin start   (or 'setup' for a background service)");
+    if (serviceInstalled()) console.log(`  Start it with: ${CLI} restart`);
+    else console.log(`  Start it with: ${CLI} start   (or 'setup' for a background service)`);
   }
 }
 
@@ -64,7 +66,7 @@ function restart() {
   const r = restartService();
   if (!r.ok) {
     console.error(`✗ Could not restart the service: ${r.message}.`);
-    console.error("  Install it with: hermes-zalo-plugin setup --service-only   (or run 'start' in the foreground)");
+    console.error(`  Install it with: ${CLI} setup --service-only   (or run 'start' in the foreground)`);
     process.exit(1);
   }
   console.log("✓ Bridge service restarted.");
@@ -78,35 +80,22 @@ function stop() {
     if (!serviceInstalled()) console.error("  (A bridge started with 'start' stops with Ctrl-C.)");
     process.exit(1);
   }
-  console.log("✓ Bridge service stopped. Start it again with: hermes-zalo-plugin restart");
+  console.log(`✓ Bridge service stopped. Start it again with: ${CLI} restart`);
   if (process.platform !== "linux") console.log("  (It also starts again at your next login.)");
-}
-
-function banner() {
-  const tty = process.stdout.isTTY;
-  const c = (code, s) => (tty ? `\x1b[${code}m${s}\x1b[0m` : s);
-  const blue = (s) => c("38;5;33", s);
-  const cyan = (s) => c("36", s);
-  const dim = (s) => c("2", s);
-  console.log(
-    "\n" +
-    blue("  ╦ ╦┌─┐┬─┐┌┬┐┌─┐┌─┐  ") + cyan("╔═╗┌─┐┬  ┌─┐") + "\n" +
-    blue("  ╠═╣├┤ ├┬┘│││├┤ └─┐  ") + cyan("╔═╝├─┤│  │ │") + "\n" +
-    blue("  ╩ ╩└─┘┴└─┴ ┴└─┘└─┘  ") + cyan("╚═╝┴ ┴┴─┘└─┘") + "\n" +
-    dim("  Hermes × Zalo plugin") + "\n" +
-    dim("  chat with your Hermes agent from Zalo") + "\n",
-  );
 }
 
 function help() {
   banner();
-  console.log(`Usage: hermes-zalo-plugin <command> [options]
+  console.log(`Usage: ${CLI} <command> [options]
 
 Commands:
   setup        Log in (QR) if needed and install a background auto-start service
-               -p, --profile <name>   Hermes profile to install the adapter into
+               -p, --profile <names>  Hermes profile(s) to install the adapter into, comma-separated
                                       (default = ~/.hermes, <name> = ~/.hermes/profiles/<name>;
                                       also reads HERMES_PROFILE)
+               --service-only         only (re)install the service + adapter (after an update)
+               --no-service           skip the background service
+               --relogin              force a new QR scan
                --hermes-home <dir>    advanced: explicit Hermes home (also reads HERMES_HOME)
                --with-hook            also install the tool access hook
                --hook-owner <uid>     hook + owner uid(s) in the profile .env
@@ -117,14 +106,14 @@ Commands:
   stop         Stop the background service (stays installed; 'restart' brings it back)
   status       Show bridge health and the data directory
   uninstall    Remove the service, adapter and tool access hook (--purge also deletes credentials)
-               -p, --profile <name>   remove the adapter and hook from that Hermes profile
+               -p, --profile <names>  remove the adapter and hook from these Hermes profiles
   help         Show this message
 
 Data lives in ~/.hermes-zalo/ (override with ZALO_DATA_DIR). Bridge settings
 (token, action policy) are read from ~/.hermes-zalo/bridge.env, which
 'hermes gateway setup' writes for you.
 The Hermes adapter goes into the default profile (~/.hermes) only when it already
-exists. For a named profile:  hermes-zalo-plugin setup --profile <name>
+exists. For named profiles:  ${CLI} setup --profile <name>[,<name>…]
 After 'setup', register it in Hermes:  hermes gateway setup  → choose Zalo.`);
 }
 

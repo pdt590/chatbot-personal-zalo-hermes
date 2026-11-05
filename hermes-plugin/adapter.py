@@ -39,6 +39,7 @@ import os
 import re
 import time
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -1300,29 +1301,51 @@ def _probe_health(bridge_url: str, token: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+def _bridge_cli_cmd() -> Optional[List[str]]:
+    """[node, <checkout>/bin/cli.mjs] of the bridge checkout, or None.
+
+    `setup` writes bridge_cli.json next to this file when it copies the adapter.
+    """
+    import json as _json
+    try:
+        with open(Path(__file__).with_name("bridge_cli.json"), encoding="utf-8") as f:
+            data = _json.load(f)
+        node, cli = str(data["node"]), str(data["cli"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    return [node, cli] if Path(cli).is_file() else None
+
+
 def _bridge_cli_hint() -> str:
-    """Best-effort name of the bridge CLI for copy-paste hints."""
-    import shutil
-    if shutil.which("hermes-zalo-plugin"):
-        return "hermes-zalo-plugin"
-    return "npx hermes-zalo-plugin"  # works without a global install
+    """The bridge CLI for copy-paste hints."""
+    cmd = _bridge_cli_cmd()
+    if not cmd:
+        return "node <bridge checkout>/bin/cli.mjs"
+    import shlex
+    return f"node {shlex.quote(cmd[1])}"
+
+
+def _run_bridge_cli(*args: str) -> bool:
+    """Run a bridge CLI command with inherited stdio. True on exit code 0."""
+    import subprocess
+    cmd = _bridge_cli_cmd()
+    if not cmd:
+        logger.warning("Zalo: bridge CLI not found (re-run `setup` from the bridge checkout)")
+        return False
+    try:
+        return subprocess.run([*cmd, *args]).returncode == 0
+    except Exception as e:
+        logger.warning("Zalo: could not run bridge CLI %s: %s", " ".join(args), e)
+        return False
 
 
 def _run_bridge_login() -> bool:
     """Run the bridge's QR login interactively (blocks until scanned/failed).
 
-    Returns True on success. Uses the installed CLI if present, else npx.
+    Returns True on success.
     """
-    import subprocess
-    import shutil
-    cli = "hermes-zalo-plugin" if shutil.which("hermes-zalo-plugin") else None
-    cmd = [cli, "login"] if cli else ["npx", "hermes-zalo-plugin", "login"]
-    try:
-        # Inherit stdio so the ASCII QR renders and the user can scan it.
-        return subprocess.run(cmd).returncode == 0
-    except Exception as e:
-        logger.warning("Zalo: could not launch bridge login: %s", e)
-        return False
+    # Inherits stdio so the ASCII QR renders and the user can scan it.
+    return _run_bridge_cli("login")
 
 
 def _fetch_contacts(bridge_url: str, token: str) -> Optional[Dict[str, Any]]:
@@ -1513,23 +1536,19 @@ def interactive_setup() -> None:
         print_warning(f"Bridge không phản hồi tại {bridge} (service đang tắt hoặc chưa khởi động).")
         print_info("Phiên đăng nhập (credentials) vẫn được giữ — chỉ cần bật lại service, KHÔNG cần quét QR lại.")
         if prompt_yes_no("Bật lại background service ngay bây giờ?", True):
-            import subprocess, shutil
-            svc_cli = "hermes-zalo-plugin" if shutil.which("hermes-zalo-plugin") else None
-            svc_cmd = [svc_cli, "setup", "--service-only"] if svc_cli else ["npx", "hermes-zalo-plugin", "setup", "--service-only"]
-            try:
-                subprocess.run(svc_cmd)
-            except Exception as e:
-                print_warning(f"Không tự bật được service: {e}")
+            # Re-install into THIS profile (<home>/plugins/zalo/adapter.py).
+            home = str(Path(__file__).resolve().parents[2])
+            if not _run_bridge_cli("setup", "--service-only", "--hermes-home", home):
+                print_warning("Không tự bật được service.")
             # Re-probe after the attempt.
             import time as _t
             _t.sleep(2)
             health = _probe_health(bridge, token)
             if health is None:
                 print_warning("Bridge vẫn chưa lên. Bật thủ công rồi chạy lại `hermes gateway setup`:")
-                print_info(f"   {cli} setup --service-only        # nếu cài qua npm")
-                print_info("   npm start                         # nếu chạy từ source")
+                print_info(f"   {cli} setup --service-only   (hoặc chạy tạm: {cli} start)")
         else:
-            print_info("Bỏ qua. Khi nào muốn bật: " + f"{cli} setup --service-only  (hoặc `npm start`)")
+            print_info(f"Bỏ qua. Khi nào muốn bật: {cli} setup --service-only  (hoặc {cli} start)")
 
     if health is not None and (not health.get("loggedIn") or health.get("sessionDead")):
         # State 2: bridge is up but the Zalo session is dead/logged out.
@@ -1759,14 +1778,8 @@ def interactive_setup() -> None:
         print_info(f"✓ Đã ghi cấu hình phía bridge vào {env_file}")
         if health is not None:
             if prompt_yes_no("Khởi động lại bridge ngay để áp dụng cấu hình mới?", True):
-                import subprocess
-                import shutil
-                rcli = "hermes-zalo-plugin" if shutil.which("hermes-zalo-plugin") else None
-                rcmd = [rcli, "restart"] if rcli else ["npx", "hermes-zalo-plugin", "restart"]
-                try:
-                    subprocess.run(rcmd)
-                except Exception as e:
-                    print_warning(f"Không tự khởi động lại được bridge: {e}")
+                if not _run_bridge_cli("restart"):
+                    print_warning("Không tự khởi động lại được bridge.")
             else:
                 print_info(f"   Khi nào muốn áp dụng:  {cli} restart")
     except OSError as e:

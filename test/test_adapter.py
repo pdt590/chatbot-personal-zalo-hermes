@@ -503,5 +503,37 @@ class SensitiveActionsTest(unittest.TestCase):
             self.assertIn(name, adapter._ACTION_GROUP)
 
 
+class BridgeCliTest(unittest.TestCase):
+    """bridge_cli.json (written by setup next to adapter.py) locates the checkout CLI."""
+
+    def _with_record(self, record):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        fake = Path(tmp.name) / "adapter.py"
+        if record is not None:
+            (Path(tmp.name) / "bridge_cli.json").write_text(
+                record if isinstance(record, str) else json.dumps(record), encoding="utf-8")
+        old = adapter.__file__
+        adapter.__file__ = str(fake)
+        self.addCleanup(setattr, adapter, "__file__", old)
+        return Path(tmp.name)
+
+    def test_reads_node_and_cli(self):
+        d = self._with_record(None)
+        cli = d / "cli.mjs"
+        cli.write_text("", encoding="utf-8")
+        (d / "bridge_cli.json").write_text(json.dumps({"node": "/usr/bin/node", "cli": str(cli)}), encoding="utf-8")
+        self.assertEqual(adapter._bridge_cli_cmd(), ["/usr/bin/node", str(cli)])
+        self.assertIn(str(cli), adapter._bridge_cli_hint())
+
+    def test_missing_or_broken_record(self):
+        for record in (None, "not json", {"node": "node"}, {"node": "node", "cli": "/nope/cli.mjs"}):
+            with self.subTest(record=record):
+                self._with_record(record)
+                self.assertIsNone(adapter._bridge_cli_cmd())
+                self.assertEqual(adapter._bridge_cli_hint(), "node <bridge checkout>/bin/cli.mjs")
+                self.assertFalse(adapter._run_bridge_cli("status"))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,13 +1,11 @@
 // paths.js — central resolution of where the bridge stores its data.
 //
-// When installed globally (npm i -g), the package directory is read-only and
-// gets wiped on update, so credentials/QR/cache MUST live in the user's home,
-// not next to the code. Resolution order:
+// Credentials/QR/cache live in the user's home, not next to the code, so a
+// `git pull` or a fresh clone never touches the login. Resolution order:
 //   1) explicit env (ZALO_DATA_DIR, or per-file ZALO_CREDENTIALS_PATH/ZALO_QR_PATH)
-//   2) ~/.hermes-zalo/   (default for global/CLI installs)
+//   2) ~/.hermes-zalo/
 //
-// A local dev checkout can opt back into ./data by setting
-// ZALO_DATA_DIR=./data (or running with that env), keeping old behaviour.
+// For an isolated local run, set ZALO_DATA_DIR=./data.
 
 import os from "node:os";
 import path from "node:path";
@@ -226,6 +224,33 @@ export function resolveHermesHome(argv = [], env = process.env) {
     return { dir, profile: profileNameForHome(dir, env), source: "env" };
   }
   return { dir: platformDefaultHermesHome(env), profile: "default", source: "default" };
+}
+
+/**
+ * Like resolveHermesHome(), but `--profile` / `-p` / HERMES_PROFILE may list
+ * several comma-separated profiles (`--profile default,work`). Duplicates are
+ * dropped. Returns a non-empty array of the same objects.
+ */
+export function resolveHermesHomes(argv = [], env = process.env) {
+  const named = flagValue(argv, "--profile") ?? flagValue(argv, "-p");
+  const envProfile = (env.HERMES_PROFILE || "").trim();
+  const list = named ?? (flagValue(argv, "--hermes-home") == null ? envProfile : "");
+  if (!list.includes(",")) return [resolveHermesHome(argv, env)];
+  if (named != null && flagValue(argv, "--hermes-home") != null) {
+    throw new Error("use either --profile or --hermes-home, not both");
+  }
+  const source = named != null ? "profile" : "env-profile";
+  const seen = new Set();
+  const out = [];
+  for (const part of list.split(",")) {
+    if (!part.trim()) continue;
+    const profile = normalizeProfileName(part);
+    if (seen.has(profile)) continue;
+    seen.add(profile);
+    out.push({ dir: profileHome(profile, env), profile, source });
+  }
+  if (!out.length) throw new Error("profile name cannot be empty");
+  return out;
 }
 
 /** Human label for where resolveHermesHome() got its answer. */

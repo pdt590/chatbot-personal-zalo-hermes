@@ -1,11 +1,12 @@
 // service.js — shared helpers for the per-OS background service
 // (systemd user unit on Linux, launchd agent on macOS, Scheduled Task on Windows).
-// Used by bin/cli.mjs (stop/restart/status) and install.mjs (--relogin).
+// Used by bin/cli.mjs (stop/restart/status), install.mjs and uninstall.mjs.
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { dataDir } from "./paths.js";
 
 export const LABEL = "com.hermes.zaloplugin";
 export const WIN_TASK = "HermesZaloPlugin";
@@ -14,6 +15,8 @@ export const unitPath = () =>
   path.join(os.homedir(), ".config", "systemd", "user", `${LABEL}.service`);
 export const plistPath = () =>
   path.join(os.homedir(), "Library", "LaunchAgents", `${LABEL}.plist`);
+// Windows: cmd launcher the Scheduled Task runs (sets cwd, env, log redirection).
+export const winLauncherPath = () => path.join(dataDir(), "bridge-launcher.cmd");
 
 function quiet(bin, args) {
   return spawnSync(bin, args, { stdio: "ignore", shell: process.platform === "win32" });
@@ -95,4 +98,38 @@ export function serviceState() {
     return r.status === 0 ? "installed (loaded)" : "installed (stopped)";
   }
   return "installed";
+}
+
+/**
+ * Stop and unregister the service and delete its unit/plist/launcher.
+ * Returns { removed, message }; removed=false when nothing was installed.
+ */
+export function removeService() {
+  if (process.platform === "linux") {
+    if (quiet("systemctl", ["--version"]).status === 0) {
+      quiet("systemctl", ["--user", "disable", "--now", `${LABEL}.service`]);
+      quiet("systemctl", ["--user", "daemon-reload"]);
+    }
+    return removeFile(unitPath(), "systemd unit");
+  }
+  if (process.platform === "darwin") {
+    if (fs.existsSync(plistPath())) quiet("launchctl", ["unload", plistPath()]);
+    return removeFile(plistPath(), "launchd service");
+  }
+  if (process.platform === "win32") {
+    // Stop a running bridge first: /Delete leaves the process alive.
+    quiet("schtasks", ["/End", "/TN", WIN_TASK]);
+    const ok = loud("schtasks", ["/Delete", "/F", "/TN", WIN_TASK]).status === 0;
+    fs.rmSync(winLauncherPath(), { force: true });
+    return ok
+      ? { removed: true, message: `Removed Scheduled Task '${WIN_TASK}'` }
+      : { removed: false, message: `No Scheduled Task '${WIN_TASK}' (or removal failed)` };
+  }
+  return { removed: false, message: `Unsupported platform '${process.platform}'` };
+}
+
+function removeFile(file, what) {
+  if (!fs.existsSync(file)) return { removed: false, message: `No ${what} found` };
+  fs.rmSync(file, { force: true });
+  return { removed: true, message: `Removed ${what}: ${file}` };
 }

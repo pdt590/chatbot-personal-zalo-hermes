@@ -4,13 +4,14 @@
 // credentials to the data dir (~/.hermes-zalo by default) so the bridge
 // starts without QR.
 //
-//   node login.mjs            # login if not already logged in
-//   node login.mjs --force    # ignore saved credentials, re-scan QR
+//   node bin/cli.mjs login            # login if not already logged in
+//   node bin/cli.mjs login --force    # ignore saved credentials, re-scan QR
 
 import fs from "node:fs";
 import { ZaloClient } from "./zaloClient.js";
 import { credentialsPath, qrPath, loadBridgeEnv } from "./paths.js";
 import { serviceInstalled } from "./service.js";
+import { CLI } from "./ui.js";
 
 loadBridgeEnv(); // same port/token the bridge service uses
 
@@ -49,7 +50,7 @@ async function reloadRunningBridge() {
   if (!(await probeBridge())) {
     // setup starts the service itself right after this script.
     if (!process.env.HZP_FROM_SETUP && serviceInstalled()) {
-      console.log("• The bridge service is not running. Start it:  hermes-zalo-plugin restart");
+      console.log(`• The bridge service is not running. Start it:  ${CLI} restart`);
     }
     return;
   }
@@ -71,9 +72,9 @@ async function reloadRunningBridge() {
         return;
       }
     }
-    console.log("⚠ The running bridge has not logged in yet; check `hermes-zalo-plugin status`.");
+    console.log(`⚠ The running bridge has not logged in yet; check \`${CLI} status\`.`);
   } catch (e) {
-    console.log(`⚠ Could not ask the running bridge to reload (${e.message}). Restart it: hermes-zalo-plugin restart`);
+    console.log(`⚠ Could not ask the running bridge to reload (${e.message}). Restart it: ${CLI} restart`);
   }
 }
 
@@ -87,8 +88,8 @@ async function main() {
   }
   if (force && (await bridgeAlreadyLoggedIn())) {
     console.error("✗ A bridge is currently running and logged in.");
-    console.error("  Stop it first:  hermes-zalo-plugin stop   (then login --force, then restart),");
-    console.error("  or do it in one step:  hermes-zalo-plugin setup --relogin");
+    console.error(`  Stop it first:  ${CLI} stop   (then login --force, then restart),`);
+    console.error(`  or do it in one step:  ${CLI} setup --relogin`);
     console.error("  Re-logging in while it runs would kick the live session (DuplicateConnection).");
     process.exit(1);
   }
