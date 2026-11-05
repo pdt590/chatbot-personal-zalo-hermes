@@ -6,6 +6,7 @@
 #   ./install.sh                # full setup
 #   ./install.sh --no-service   # skip the auto-start service
 #   ./install.sh --relogin      # force a fresh QR login
+#   ./install.sh --with-hook    # also install the tool access hook
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

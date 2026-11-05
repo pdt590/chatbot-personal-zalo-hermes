@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # uninstall.sh — Hermes Zalo plugin uninstaller for macOS / Linux.
 # Thin wrapper: verifies Node is present, then hands off to uninstall.mjs
-# (stops + removes the background service, removes the Hermes adapter).
+# (stops + removes the background service, removes the Hermes adapter and the
+# tool access hook).
 #
 #   ./uninstall.sh                          # remove service + adapter, keep the Zalo login
 #   ./uninstall.sh --purge                  # also delete the saved Zalo login (credentials)

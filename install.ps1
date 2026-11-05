@@ -4,6 +4,7 @@
 #   .\install.ps1                # full setup
 #   .\install.ps1 --no-service   # skip the auto-start scheduled task
 #   .\install.ps1 --relogin      # force a fresh QR login
+#   .\install.ps1 --with-hook    # also install the tool access hook
 #
 # If you get an execution-policy error, run once:
 #   Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass

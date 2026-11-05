@@ -7,96 +7,92 @@
 [English](./README.md) · 📖 **Tiếng Việt**
 
 [![npm version](https://img.shields.io/npm/v/hermes-zalo-plugin.svg)](https://www.npmjs.com/package/hermes-zalo-plugin)
-[![npm downloads](https://img.shields.io/npm/dm/hermes-zalo-plugin.svg)](https://www.npmjs.com/package/hermes-zalo-plugin)
-[![GitHub stars](https://img.shields.io/github/stars/cuongdev/hermes-zalo-plugin?style=social)](https://github.com/cuongdev/hermes-zalo-plugin/stargazers)
 [![license](https://img.shields.io/npm/l/hermes-zalo-plugin.svg)](./LICENSE)
 
-Chat với **Hermes Agent** của bạn từ một **tài khoản Zalo cá nhân**: chat riêng
-và nhóm, có ảnh, file, tin nhắn thoại, sticker và thả cảm xúc. Chạy được trên
-macOS, Linux và Windows.
+Chat với **Hermes Agent** từ một **tài khoản Zalo cá nhân**: chat riêng và nhóm,
+hỗ trợ ảnh, file, tin nhắn thoại, sticker và thả cảm xúc. Chạy trên macOS, Linux
+và Windows.
 
 > ⚠️ Plugin dùng [zca-js](https://www.npmjs.com/package/zca-js), một API Zalo
 > **không chính thức**. Zalo có thể giới hạn hoặc khoá tài khoản chạy tự động.
 > Hãy dùng tài khoản phụ.
 
-## Bắt đầu nhanh
+## Mục lục
 
-**Cần có:** Node.js ≥ 18, Hermes Agent đã chạy `pip install aiohttp`, và app Zalo
-trên điện thoại để quét mã QR.
+1. [Cài đặt](#cài-đặt)
+2. [Cách hoạt động](#cách-hoạt-động)
+3. [Sử dụng](#sử-dụng)
+4. [Cấu hình](#cấu-hình)
+5. [Bảo mật](#bảo-mật)
+6. [HTTP API](#http-api)
+7. [Cập nhật & gỡ cài đặt](#cập-nhật--gỡ-cài-đặt)
+8. [Xử lý sự cố](#xử-lý-sự-cố)
+9. [Phát triển](#phát-triển)
 
-**1. Tải mã nguồn** và giữ nguyên thư mục ở chỗ đó: service chạy nền sẽ chạy
-bridge từ chính thư mục này.
+## Cài đặt
+
+**Cần có:** Node.js ≥ 18, Hermes Agent (`pip install aiohttp`), và app Zalo trên
+điện thoại để quét mã QR.
 
 ```bash
+# 1. Tải mã nguồn. Giữ nguyên thư mục: service chạy nền chạy từ đây.
 git clone https://github.com/pdt590/chatbot-personal-zalo-hermes.git hermes-zalo-plugin
 cd hermes-zalo-plugin
-```
 
-**2. Chạy file cài đặt.** Trình cài đặt sẽ cài các thư viện cần thiết, hiện mã
-QR để quét bằng app Zalo, đăng ký service chạy nền, và chép adapter vào Hermes.
+# 2. Cài đặt: thư viện, đăng nhập QR, service chạy nền, adapter cho Hermes.
+./install.sh                    # Windows: .\install.ps1
 
-| macOS / Linux    | Windows (PowerShell) |
-| ---------------- | -------------------- |
-| `./install.sh` | `.\install.ps1`    |
-
-Trên Windows, nếu PowerShell không cho chạy script, hãy chạy trước lệnh
-`Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`.
-
-**3. Kết nối với Hermes:**
-
-```bash
-hermes gateway setup            # chọn "Zalo": ai được dùng bot, cấp quyền
+# 3. Kết nối với Hermes.
+hermes gateway setup            # chọn "Zalo": người dùng, nhóm, quyền
 hermes gateway                  # bắt đầu chat
 ```
 
-Chạy lại trình cài đặt nhiều lần vẫn an toàn. Khi phiên đăng nhập đã lưu còn
-dùng được thì không phải quét QR lại, và service được khởi động lại để chạy code
-mới. Các tuỳ chọn (giống nhau trên mọi hệ điều hành, ví dụ `./install.sh --relogin`):
+Trên Windows, nếu PowerShell chặn script, chạy trước
+`Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`.
 
-| Cờ                      | Tác dụng                                                                                                                                                         |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `--relogin`            | Bắt buộc quét QR mới. Bridge đang chạy sẽ được dừng trước rồi bật lại.                                                                             |
-| `--service-only`       | Chỉ cài (lại) service và adapter.                                                                                                                              |
-| `--no-service`         | Không cài service; tự chạy bridge bằng `node bin/cli.mjs start`.                                                                                            |
-| `--hermes-home <path>` | Cài adapter vào profile Hermes này. Tương đương đặt `HERMES_HOME`. Nếu không chỉ định, chỉ dùng `~/.hermes` khi thư mục đó đã có sẵn. |
+Chạy lại trình cài đặt là an toàn: nó bỏ qua bước quét QR khi phiên còn hiệu lực
+và khởi động lại service với mã mới.
+
+| Tuỳ chọn               | Tác dụng                                                                                                  |
+| ---------------------- | --------------------------------------------------------------------------------------------------------- |
+| `--relogin`            | Bắt buộc quét QR lại.                                                                                     |
+| `--service-only`       | Chỉ cài (lại) service và adapter.                                                                         |
+| `--no-service`         | Không cài service; tự chạy bridge bằng `node bin/cli.mjs start`.                                          |
+| `--hermes-home <path>` | Cài adapter vào profile Hermes này (giống `HERMES_HOME`). Mặc định: `~/.hermes` nếu thư mục đã tồn tại. |
+| `--with-hook`          | Cài thêm [hook kiểm soát tool](#hook-kiểm-soát-tool-tuỳ-chọn). Đã cài thì các lần chạy sau tự cập nhật. |
+| `--hook-owner <uid>`   | Cài hook và đặt `ZALO_HOOK_OWNERS` (uid cách nhau bằng dấu phẩy) trong `.env` của profile.            |
+| `--hook-mode <mode>`   | Cài hook và đặt `ZALO_HOOK_OWNER_MODE`: `read` · `full-dm` · `full`.                                    |
 
 ## Cách hoạt động
 
 ```mermaid
 flowchart LR
-  Z[Máy chủ Zalo] <-- "WebSocket vào<br/>HTTPS ra" --> B["Bridge (Node + zca-js)<br/>server.js · service chạy nền"]
+  Z[Máy chủ Zalo] <-- "WebSocket vào<br/>HTTPS ra" --> B["Bridge (Node + zca-js)<br/>service chạy nền"]
   B -- "SSE  GET /events" --> A["Adapter Hermes (Python)<br/>~/.hermes/plugins/zalo"]
   A -- "REST  POST /send, /api/…" --> B
   A <--> H[Hermes gateway + agent]
 ```
 
-Package gồm hai phần:
+| Thành phần                                | Chạy dưới dạng                                                                     | Nhiệm vụ                                                                                                                       |
+| ----------------------------------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| **Bridge** (`server.js`, `zaloClient.js`) | systemd user unit (Linux), launchd agent (macOS), Scheduled Task khi đăng nhập (Windows) | Giữ phiên Zalo, đẩy sự kiện đến qua SSE, cung cấp REST cho mọi hàm zca-js, có chính sách quyền kiểm soát.             |
+| **Adapter** (`hermes-plugin/`)            | Plugin `zalo-platform` bên trong `hermes gateway`                                  | Chuyển sự kiện thành tin nhắn Hermes, tải media, quyết định trả lời chat nào, gửi phản hồi qua bridge.                       |
 
-| Phần                                               | Chạy ở đâu                                                                                                | Nhiệm vụ                                                                                                                                                                                                                                |
-| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Bridge** (`server.js`, `zaloClient.js`) | Service chạy nền: systemd user unit (Linux), launchd agent (macOS), Scheduled Task khi đăng nhập Windows | Giữ phiên Zalo luôn sống (keepalive, tự đăng nhập lại bằng cookie). Đẩy sự kiện đến qua SSE (heartbeat 15 giây, phát lại theo `Last-Event-ID`). Mở REST route cho cả 154 hàm của zca-js, có kiểm soát quyền. |
-| **Adapter** (`hermes-plugin/`)              | Bên trong `hermes gateway`, là plugin `zalo-platform`                                                   | Chuyển sự kiện SSE thành tin nhắn Hermes và tải media đến. Quyết định bot trả lời ở cuộc chat nào. Gửi câu trả lời qua bridge.                                                                                       |
+Dữ liệu nằm trong `~/.hermes-zalo/` (đổi bằng `ZALO_DATA_DIR`): `credentials.json`,
+`bridge.env`, `qr.png`, bộ nhớ thu hồi tin nhắn và log. Cập nhật hay cài lại đều giữ nguyên.
 
-Dữ liệu nằm ở `~/.hermes-zalo/` (đổi bằng `ZALO_DATA_DIR`): `credentials.json`,
-`bridge.env`, `qr.png`, cache thu hồi tin `climsgids/`, và log trên macOS/Windows.
-Cập nhật hay cài lại đều không đụng tới thư mục này.
+### Lệnh
 
-## Các lệnh
+`node bin/cli.mjs <lệnh>` (hiển thị là `hermes-zalo-plugin <lệnh>` trong thông báo
+của công cụ và khi cài từ npm):
 
-Chạy trong thư mục plugin theo dạng `node bin/cli.mjs <lệnh>`:
-
-| Lệnh               | Tác dụng                                                                                                 |
-| ------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `status`          | Xem trạng thái service, tình trạng bridge, tài khoản đang đăng nhập và đường dẫn dữ liệu. |
-| `login [--force]` | Đăng nhập bằng QR. Bridge đang chạy mà bị đăng xuất sẽ tự nhận phiên mới.                  |
-| `restart`         | Khởi động lại service, hoặc bật lên nếu đang tắt. Chạy lệnh này sau khi sửa `bridge.env`.  |
-| `stop`            | Dừng service. Service vẫn được giữ nguyên cài đặt.                                               |
-| `start`           | Chạy bridge ở foreground (Ctrl-C để dừng).                                                            |
-
-Cài đặt và gỡ cài đặt dùng các file script: `install.sh` / `install.ps1` và
-`uninstall.sh` / `uninstall.ps1`. Thông báo của công cụ và của wizard Hermes ghi
-`hermes-zalo-plugin <lệnh>`; khi cài từ mã nguồn, lệnh tương ứng là
-`node bin/cli.mjs <lệnh>`.
+| Lệnh              | Tác dụng                                                              |
+| ----------------- | --------------------------------------------------------------------- |
+| `status`          | Trạng thái service, sức khoẻ bridge, tài khoản đăng nhập, đường dẫn dữ liệu. |
+| `login [--force]` | Đăng nhập QR. Bridge đang chạy tự nhận phiên mới.                     |
+| `restart`         | Khởi động lại (hoặc khởi động) service. Cần sau khi sửa `bridge.env`. |
+| `stop`            | Dừng service; service vẫn được cài.                                   |
+| `start`           | Chạy bridge ở foreground.                                             |
 
 ## Sử dụng
 
@@ -104,311 +100,212 @@ Cài đặt và gỡ cài đặt dùng các file script: `install.sh` / `install
   <img src="https://raw.githubusercontent.com/cuongdev/hermes-zalo-plugin/main/assets/zalo-chat.svg" alt="Chat với Hermes agent từ Zalo" width="300">
 </p>
 
-- **Chat riêng:** nhắn tin tới tài khoản Zalo của bot, agent sẽ trả lời.
-- **Nhóm:** mặc định bot chỉ trả lời khi được @nhắc, khi có người trả lời tin
-  của bot, hoặc khi tin nhắn bắt đầu bằng tên hiển thị của bot
-  (`ZALO_GROUP_MODE=mention`). Nếu không chọn nhóm nào trong wizard, bot sẽ không
-  hoạt động ở nhóm nào.
-- **Thống kê và tóm tắt nhóm:** plugin thêm toolset `zalo_groups` gồm hai tool
-  cho agent: `zalo_group_stats` (mọi nhóm, số thành viên, hoạt động gần đây) và
-  `zalo_group_messages` (tin nhắn gần đây của một nhóm, kể cả tin không gọi bot,
-  để tóm tắt). Bật cho Zalo bằng cách thêm `zalo_groups` vào
-  `platform_toolsets.zalo` trong `config.yaml` của profile. Bridge tự lưu tin nhóm
-  (`ZALO_GROUP_LOG_DAYS`), nên chỉ có tin nhận được trong lúc bridge đang chạy.
-- **Tìm ID:** đặt `ZALO_LOG_IDS=true`, gửi một tin nhắn, rồi đọc dòng
-  `uid=… threadId=…` trong log của gateway.
-- **Đổi cấu hình:** chạy lại `hermes gateway setup`. Wizard cho tìm danh bạ theo
-  tên, nên bạn không cần gõ ID.
+- **Chat riêng:** nhắn tin cho tài khoản Zalo của bot.
+- **Nhóm:** mặc định (`ZALO_GROUP_MODE=mention`) bot chỉ trả lời khi được @nhắc tên,
+  được trả lời tin nhắn, hoặc khi tin nhắn bắt đầu bằng tên hiển thị của bot. Nếu
+  không chọn nhóm nào trong wizard, bot không tham gia nhóm nào.
+- **Thống kê & tóm tắt nhóm:** thêm `zalo_groups` vào `platform_toolsets.zalo` trong
+  `config.yaml` để agent có `zalo_group_stats` và `zalo_group_messages`. Chỉ có các
+  tin nhắn nhận được khi bridge đang chạy (`ZALO_GROUP_LOG_DAYS`).
+- **Tìm ID:** đặt `ZALO_LOG_IDS=true`, gửi một tin nhắn, đọc dòng `uid=… threadId=…`
+  trong log gateway. `hermes gateway setup` tìm danh bạ theo tên nên hiếm khi cần ID.
 
 ### Định dạng tin nhắn
 
-Agent viết Markdown, bridge chuyển sang kiểu chữ của Zalo:
+Agent viết Markdown; bridge chuyển thành kiểu chữ của Zalo.
 
-| Bạn viết                                                                   | Zalo hiển thị                              |
-| -------------------------------------------------------------------------- | ------------------------------------------ |
-| `**đậm**` hoặc `__đậm__`                                                   | chữ đậm                                    |
-| `*nghiêng*` hoặc `_nghiêng_`                                               | chữ nghiêng                                |
-| `***vừa đậm vừa nghiêng***`                                                | đậm + nghiêng                              |
-| `~~gạch ngang~~`                                                           | gạch ngang                                 |
-| `` `mã` ``                                                                 | chữ đậm (Zalo không có font đơn cách)      |
-| `# Tiêu đề` (mọi cấp) ở đầu dòng                                           | đậm + chữ lớn                              |
-| `> trích dẫn`                                                              | chữ nghiêng                                |
-| `1. mục` hoặc `1) mục`                                                     | số thứ tự đậm + chữ lớn                    |
-| `- mục` hoặc `* mục`, mục con thụt lề                                      | `- mục`, mục con thành `• mục`             |
-| `[chữ](https://…)`                                                         | **chữ** (https://…)                        |
-| `[red]…[/red]` · `[orange]…[/orange]` · `[yellow]…[/yellow]` · `[green]…[/green]` | chữ màu                             |
+| Markdown                                           | Zalo hiển thị                         |
+| -------------------------------------------------- | ------------------------------------- |
+| `**đậm**`, `*nghiêng*`, `***cả hai***`, `~~gạch~~` | kiểu tương ứng                        |
+| `` `code` ``                                       | đậm (Zalo không có font monospace)    |
+| `# Tiêu đề` (mọi cấp)                              | đậm + chữ lớn                         |
+| `> trích dẫn`                                      | nghiêng                               |
+| `1. mục`                                           | số in đậm + chữ lớn                   |
+| `- mục`, mục con                                   | `- mục`, mục con thành `• mục`        |
+| `[nhãn](https://…)`                                | **nhãn** (https://…)                  |
+| `[red]…[/red]`, `[orange]`, `[yellow]`, `[green]`  | chữ màu (tên khác: `do`, `cam`, `vang`, `xanh`) |
 
-Thẻ màu không phân biệt hoa thường và có tên tiếng Việt: `[do]` (đỏ), `[cam]`
-(cam), `[vang]` (vàng), `[xanh]` (xanh lá). Có thể lồng kiểu chữ khác vào trong,
-ví dụ `[red]Tổng: **500.000đ**[/red]`.
-
-Kiểu chữ lồng nhau được, ví dụ `*nghiêng có **đậm** bên trong*`. Ký hiệu phải
-dính liền với chữ được bọc, nên `2 * 3`, `a ** b **`, `snake_case` và
-`my__var__x` được giữ nguyên. Định dạng không kéo qua dòng mới. Với khối
-` ``` `, dấu rào bị bỏ còn nội dung giữ nguyên như đã gõ. Đường kẻ `---` bị bỏ
-và nhiều dòng trống liền nhau gộp thành một. Zalo không có bảng, nên bảng hiện
-dạng chữ thường. Câu trả lời dài được tách thành nhiều tin, mỗi tin nằm trong
-giới hạn của Zalo (2000 ký tự, 40 kiểu chữ, khoảng 3000 byte), ưu tiên cắt ở
-chỗ xuống đoạn hoặc xuống dòng. Tin có @tag người được gửi thành một tin, và
-giữ nguyên chữ gốc nếu việc định dạng làm lệch vị trí tag.
+Ký hiệu phải dính sát chữ được bọc (`2 * 3`, `snake_case` giữ nguyên) và không vượt
+qua dấu xuống dòng. Khối code bỏ hàng rào ```` ``` ````, `---` bị bỏ, bảng hiển thị
+dạng văn bản thường. Câu trả lời dài được tách ở chỗ ngắt đoạn/dòng để vừa giới hạn
+của Zalo (2000 ký tự, 40 kiểu chữ).
 
 ## Cấu hình
 
-Cấu hình nằm ở hai nơi, vì bridge và adapter là hai tiến trình riêng.
-`hermes gateway setup` ghi cả hai nơi và đề nghị khởi động lại bridge.
+`hermes gateway setup` ghi cả hai file dưới đây.
 
-**Adapter:** file `.env` của profile Hermes. Sửa xong thì khởi động lại `hermes gateway`.
+**Adapter:** file `.env` của profile Hermes. Khởi động lại `hermes gateway` sau khi sửa.
 
-| Biến                    | Mặc định               | Ý nghĩa                                                                                                                                                                                                 |
-| ------------------------ | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ZALO_PLUGIN_URL`      | bắt buộc                | Địa chỉ bridge, ví dụ `http://127.0.0.1:8787`. Chưa đặt biến này thì adapter không chạy.                                                                                                   |
-| `ZALO_PLUGIN_TOKEN`    | —                        | Phải trùng với token của bridge, nếu bridge có đặt token.                                                                                                                                         |
-| `ZALO_ALLOWED_USERS`   | trống                    | Danh sách uid người gửi được dùng bot, cách nhau bằng dấu phẩy. Để trống là cho mọi người, khi đó cần thêm `ZALO_ALLOW_ALL_USERS=true`.                                          |
-| `ZALO_ALLOW_ALL_USERS` | `false`                 | Hermes gateway đọc biến này: `true` thì ai cũng nói chuyện được với bot. Không có biến này (hoặc danh sách cho phép), Hermes sẽ yêu cầu người lạ ghép cặp (pairing) trước. |
-| `ZALO_ALLOWED_THREADS` | trống, tức là tất cả | ID nhóm hoặc cuộc chat mà bot hoạt động, cách nhau bằng dấu phẩy                                                                                                                               |
-| `ZALO_GROUP_MODE`      | `mention`               | `mention` · `all` · `off`                                                                                                                                                                         |
-| `ZALO_GROUP_TRIGGERS` | trống                   | Các từ (cách nhau bằng dấu phẩy) dùng để gọi bot trong nhóm khi đứng đầu tin nhắn, ngoài tên hiển thị của bot (vd: `bot,hermes`) |
-| `ZALO_REPLY_QUOTE`     | `group`                 | Câu trả lời của bot có trích dẫn (quote) tin nhắn được hỏi không: `group` (chỉ trong nhóm) · `all` · `off` |
-| `ZALO_MEDIA_WAIT`      | `300`            | Số giây một file, ảnh hoặc video gửi không kèm chữ chờ tin nhắn chữ kế tiếp của người gửi, rồi đi cùng tin đó. `0` thì trả lời ngay cả khi chỉ có file. |
-| `ZALO_OWNER_IDS`       | `ZALO_HOOK_OWNERS`, rồi `allow_admin_from` trong `config.yaml` | Uid của chủ bot. Phiên của họ có `Channel Topic` báo cho agent biết người nhắn là chủ bot đã xác minh (tên hiển thị không chứng minh được gì). |
-| `ZALO_HOME_CHANNEL`    | —                        | Nơi nhận tin từ cron: `<uid>` hoặc `group:<id>`                                                                                                                                                   |
-| `ZALO_LOG_IDS`         | `false`                 | Ghi uid và threadId của mọi tin nhắn đến vào log                                                                                                                                                   |
+| Biến                   | Mặc định       | Ý nghĩa                                                                                       |
+| ---------------------- | -------------- | --------------------------------------------------------------------------------------------- |
+| `ZALO_PLUGIN_URL`      | bắt buộc       | Địa chỉ bridge, vd. `http://127.0.0.1:8787`.                                                  |
+| `ZALO_PLUGIN_TOKEN`    | —              | Phải khớp token của bridge, nếu có.                                                           |
+| `ZALO_ALLOWED_USERS`   | rỗng           | Danh sách uid (cách nhau bằng dấu phẩy) được dùng bot.                                        |
+| `ZALO_ALLOW_ALL_USERS` | `false`        | `true` cho phép mọi người chat với bot. Nếu không, người lạ phải pair hoặc có trong danh sách. |
+| `ZALO_ALLOWED_THREADS` | rỗng = tất cả  | Danh sách ID nhóm/chat bot hoạt động.                                                         |
+| `ZALO_GROUP_MODE`      | `mention`      | `mention` · `all` · `off`                                                                     |
+| `ZALO_GROUP_TRIGGERS`  | rỗng           | Từ khoá thêm để gọi bot khi tin nhắn nhóm bắt đầu bằng chúng (vd. `bot,hermes`).              |
+| `ZALO_REPLY_QUOTE`     | `group`        | Trích dẫn tin nhắn được trả lời: `group` · `all` · `off`                                      |
+| `ZALO_MEDIA_WAIT`      | `300`          | Số giây file/ảnh gửi không kèm chữ chờ tin nhắn chữ tiếp theo. `0` trả lời ngay.              |
+| `ZALO_OWNER_IDS`       | `ZALO_HOOK_OWNERS`, rồi `allow_admin_from` | uid của chủ bot; phiên của họ được gắn nhãn chủ đã xác minh.       |
+| `ZALO_HOME_CHANNEL`    | —              | Nơi nhận kết quả cron: `<uid>` hoặc `group:<id>`.                                             |
+| `ZALO_LOG_IDS`         | `false`        | Ghi log uid và threadId của mọi tin nhắn đến.                                                 |
 
-**Bridge:** `~/.hermes-zalo/bridge.env` (mỗi dòng `KEY=VALUE`). Biến môi trường
-thật được ưu tiên hơn file. Sửa xong thì chạy `node bin/cli.mjs restart`.
+**Bridge:** `~/.hermes-zalo/bridge.env` (dạng `KEY=VALUE`; biến môi trường thật được
+ưu tiên). Chạy `node bin/cli.mjs restart` sau khi sửa.
 
-| Biến                                                   | Mặc định                 | Ý nghĩa                                                                                                                                             |
-| ------------------------------------------------------- | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ZALO_PLUGIN_PORT` / `ZALO_PLUGIN_HOST`             | `8787` / `127.0.0.1`    | Địa chỉ lắng nghe. Nên để ở loopback.                                                                                                         |
-| `ZALO_PLUGIN_TOKEN`                                   | —                          | Mã bí mật, bắt buộc ở mọi route trừ `/health`                                                                                               |
-| `ZALO_ALLOWED_ACTION_GROUPS`                          | `read,send,interact`      | Các nhóm hành động được phép, từ ít đến nhiều rủi ro: `read` < `send` < `interact` < `manage` < `destructive`, hoặc `all` |
-| `ZALO_ALLOW_DESTRUCTIVE`                              | `false`                   | Phải là `true` thì hành động `destructive` mới chạy, kể cả khi đã chọn `all`                                                       |
-| `ZALO_ALLOWED_ACTIONS` / `ZALO_DENIED_ACTIONS`      | —                          | Tên hàm luôn được phép hoặc luôn bị chặn. Danh sách chặn có ưu tiên cao nhất.                                                        |
-| `ZALO_CLIMSG_RETENTION_DAYS`                          | `30`                      | Số ngày giữ cache thu hồi tin trên đĩa. `0` thì chỉ giữ trong bộ nhớ.                                                                   |
-| `ZALO_GROUP_LOG_DAYS`                                 | `3`                       | Số ngày bridge giữ tin nhắn nhóm để thống kê và tóm tắt nhóm. `0` thì chỉ giữ ngày gần nhất trong bộ nhớ. |
-| `ZALO_INFO_CACHE_TTL` / `ZALO_INFO_MIN_INTERVAL_MS` | `600` giây / `1500` ms | Cache và giãn cách cho các lệnh tra cứu thông tin, tránh bị khoá tài khoản                                                                |
-| `ZALO_SELF_LISTEN`                                    | tắt                        | Phát cả tin nhắn do chính tài khoản gửi đi                                                                                                    |
+| Biến                                                | Mặc định             | Ý nghĩa                                                                              |
+| --------------------------------------------------- | -------------------- | ------------------------------------------------------------------------------------ |
+| `ZALO_PLUGIN_PORT` / `ZALO_PLUGIN_HOST`             | `8787` / `127.0.0.1` | Địa chỉ lắng nghe. Giữ ở loopback.                                                   |
+| `ZALO_PLUGIN_TOKEN`                                 | —                    | Khoá bí mật cho mọi route trừ `/health`.                                             |
+| `ZALO_ALLOWED_ACTION_GROUPS`                        | `read,send,interact` | `read` < `send` < `interact` < `manage` < `destructive`, hoặc `all`.                 |
+| `ZALO_ALLOW_DESTRUCTIVE`                            | `false`              | Bắt buộc cho mọi hành động `destructive`, kể cả khi dùng `all`.                      |
+| `ZALO_ALLOWED_ACTIONS` / `ZALO_DENIED_ACTIONS`      | —                    | Tên hàm luôn cho phép / luôn chặn. Danh sách chặn được ưu tiên.                      |
+| `ZALO_CLIMSG_RETENTION_DAYS`                        | `30`                 | Số ngày lưu bộ nhớ thu hồi trên đĩa. `0` = chỉ trong RAM.                            |
+| `ZALO_GROUP_LOG_DAYS`                               | `3`                  | Số ngày lưu tin nhắn nhóm cho thống kê/tóm tắt. `0` = ngày gần nhất, chỉ trong RAM. |
+| `ZALO_INFO_CACHE_TTL` / `ZALO_INFO_MIN_INTERVAL_MS` | `600` s / `1500` ms  | Cache và giãn cách tra cứu thông tin (tránh bị khoá tài khoản).                      |
+| `ZALO_SELF_LISTEN`                                  | tắt                  | Phát cả tin nhắn do chính bạn gửi.                                                   |
 
-`GET /policy` cho xem chính sách quyền đang áp dụng. Danh sách phân nhóm đầy đủ
-nằm trong [permissions.js](./permissions.js).
+`GET /policy` hiện chính sách đang áp dụng; bản đồ hành động đầy đủ ở [permissions.js](./permissions.js).
 
 ## Bảo mật
 
-- **Mỗi tài khoản chỉ một phiên.** Đăng nhập cùng tài khoản trên Zalo Web, hoặc
-  chạy bridge thứ hai, sẽ làm phiên này bị ngắt (mã 3000). App trên điện thoại
-  thì không sao; hãy đóng các phiên web khác.
-- **Bí mật phiên không lọt ra ngoài.** `getCookie` và `getContext` bị chặn ở mọi
-  nhóm, kể cả `all`; chỉ chạy khi được liệt kê trong `ZALO_ALLOWED_ACTIONS`. Các
-  route gửi file từ chối file trong thư mục dữ liệu, nên agent không thể gửi
-  `credentials.json` vào một cuộc chat.
-- **Hành động phá huỷ mặc định tắt** (giải tán nhóm, xoá tin, chặn người dùng)
-  cho tới khi đặt `ZALO_ALLOW_DESTRUCTIVE=true`. Ai được phép nói chuyện với bot
-  đều có thể nhờ agent làm những gì chính sách cho phép.
-- **Giữ bridge ở `127.0.0.1`.** Đặt `ZALO_PLUGIN_TOKEN` nếu người dùng hay chương
-  trình khác trên máy có thể truy cập cổng này. `credentials.json` và `bridge.env`
-  nhạy cảm như mật khẩu.
+- **Mỗi tài khoản một phiên.** Mở Zalo Web hoặc bridge thứ hai trên cùng tài khoản
+  sẽ ngắt phiên này (mã 3000). App điện thoại thì không sao.
+- **Bí mật không lọt ra ngoài.** `getCookie` / `getContext` bị chặn trừ khi có trong
+  `ZALO_ALLOWED_ACTIONS`, và các route gửi từ chối file trong thư mục dữ liệu.
+- **Hành động phá huỷ bị tắt** cho đến khi đặt `ZALO_ALLOW_DESTRUCTIVE=true`. Ai được
+  chat với bot đều có thể dùng mọi thứ chính sách cho phép.
+- **Giữ bridge ở `127.0.0.1`** và đặt `ZALO_PLUGIN_TOKEN` nếu người dùng/chương trình
+  khác trên máy có thể truy cập cổng. Giữ `credentials.json` và `bridge.env` như mật khẩu.
 
-### Hook giới hạn công cụ (tuỳ chọn)
+### Hook kiểm soát tool (tuỳ chọn)
 
-[hooks/zalo-tool-access.py](./hooks/zalo-tool-access.py) chặn công cụ với người dùng Zalo. Mặc định owner chỉ dùng công cụ đọc; muốn mở toàn quyền xem [Quyền owner](#quyền-owner-chạy-lệnh-và-xem-thông-tin-hệ-thống).
-
-**Cài đặt** (`P` = thư mục profile, ví dụ `~/.hermes/profiles/<tên>`):
+[hooks/zalo-tool-access.py](./hooks/zalo-tool-access.py) giới hạn tool mà người dùng
+Zalo có thể kích hoạt. Người thường không có tool nào; chủ bot mặc định chỉ có tool đọc.
 
 ```bash
-P=~/.hermes/profiles/<tên>
-mkdir -p "$P/agent-hooks" "$P/logs"
-cp "$(npm root -g)/hermes-zalo-plugin/hooks/zalo-tool-access.py" "$P/agent-hooks/"
-chmod 700 "$P/agent-hooks/zalo-tool-access.py"
+./install.sh --hermes-home ~/.hermes/profiles/<name> --hook-owner <uid>   # hoặc --with-hook
 ```
 
-**`$P/config.yaml`:**
+Trình cài đặt chép script vào `<profile>/agent-hooks/`, đăng ký nó trong
+`hooks.pre_tool_call` của `config.yaml`, và ghi cấu hình chủ bot vào `.env` của
+profile. `./uninstall.sh` gỡ script và mục đăng ký (giữ lại các biến `ZALO_HOOK_*`).
+Nếu không đặt chủ bot, mọi người dùng Zalo đều bị chặn mọi tool.
 
-```yaml
-hooks:
-  pre_tool_call:
-    - command: "/home/<bạn>/.hermes/profiles/<tên>/agent-hooks/zalo-tool-access.py"
-      timeout: 10
-      fail_closed: true
-```
+Cấu hình đặt trong `<profile>/.env` (hoặc tham số dòng lệnh, được ưu tiên hơn). Danh sách cách nhau bằng dấu phẩy.
 
-**`$P/.env`:**
-
-```bash
-ZALO_HOOK_OWNERS=5502067660612252304
-ZALO_HOOK_EXTRA_TOOLS=web_search
-```
-
-| Biến                     | Tham số          | Mặc định                                   |
-| ------------------------ | ---------------- | ------------------------------------------ |
-| `ZALO_HOOK_OWNERS`       | `--owner`        | không có (chặn mọi người dùng Zalo)        |
-| `ZALO_HOOK_OWNER_MODE`   | `--owner-mode`   | `read`: owner chỉ dùng công cụ đọc. `full-dm`: mọi công cụ trong chat riêng, chỉ đọc trong nhóm. `full`: mọi công cụ ở mọi nơi. File thông tin đăng nhập (`.env`, `auth.json`, `id_rsa`…) vẫn bị chặn. |
-| `ZALO_HOOK_EXTRA_TOOLS`  | `--extra-tools`  | —                                          |
+| Biến                     | Tham số          | Mặc định                                                                                  |
+| ------------------------ | ---------------- | ----------------------------------------------------------------------------------------- |
+| `ZALO_HOOK_OWNERS`       | `--owner`        | không có: chặn mọi người dùng Zalo                                                        |
+| `ZALO_HOOK_OWNER_MODE`   | `--owner-mode`   | `read`. `full-dm`: mọi tool trong chat 1-1, chỉ đọc trong nhóm. `full`: mọi tool ở mọi nơi. File chứa thông tin đăng nhập luôn bị chặn. |
 | `ZALO_HOOK_OWNER_TOOLS`  | `--owner-tools`  | `read_file, search_files, vision_analyze, todo_list, tool_search, tool_describe, clarify, zalo_group_stats, zalo_group_messages` |
-| `ZALO_HOOK_SECRET_PATHS` | `--secret-paths` | —                                          |
-| `ZALO_HOOK_ALLOW_PATHS`  | `--allow-paths`  | — (luôn cho phép `$P/cache/{documents,images,audio,videos}`) |
-| `ZALO_HOOK_LOG`          | `--log`          | `$P/logs/zalo-tool-access.log`             |
-| `ZALO_HOOK_PROFILE_HOME` | `--profile-home` | thư mục cha của thư mục chứa script (không đọc từ `.env`) |
+| `ZALO_HOOK_EXTRA_TOOLS`  | `--extra-tools`  | — (tool thêm cho chủ bot, vd. `web_search`)                                               |
+| `ZALO_HOOK_SECRET_PATHS` | `--secret-paths` | —                                                                                         |
+| `ZALO_HOOK_ALLOW_PATHS`  | `--allow-paths`  | — (`$P/cache/{documents,images,audio,videos}` luôn được phép)                             |
+| `ZALO_HOOK_LOG`          | `--log`          | `$P/logs/zalo-tool-access.log`                                                            |
 
-Danh sách ngăn cách bằng dấu phẩy. Thứ tự ưu tiên: tham số > biến môi trường tiến trình > `$P/.env` > mặc định.
-
-**Phê duyệt và chạy:**
+Duyệt hook một lần (duyệt lại khi đường dẫn thay đổi), rồi khởi động lại. Sửa `.env`
+có hiệu lực ở lần gọi tool kế tiếp.
 
 ```bash
-hermes -p <tên> --accept-hooks    # một lần (hoặc HERMES_ACCEPT_HOOKS=1)
+hermes -p <name> --accept-hooks       # hoặc HERMES_ACCEPT_HOOKS=1
 systemctl --user restart hermes-gateway.service
+
+# kiểm tra
+H=~/.hermes/profiles/<name>/agent-hooks/zalo-tool-access.py
+echo '{"tool_name":"terminal"}' | HERMES_SESSION_PLATFORM=zalo HERMES_SESSION_USER_ID=123 $H  # bị chặn
+echo '{"tool_name":"terminal"}' | HERMES_SESSION_PLATFORM=cli $H                             # không in gì = được phép
 ```
 
-Sửa `.env` có hiệu lực từ lần gọi công cụ kế tiếp. Đổi `command` thì phải phê duyệt lại.
+### Toàn quyền cho chủ bot trong chat 1-1
 
-**Kiểm tra:**
+Cho phép chủ bot chạy lệnh và dùng mọi tool từ chat riêng trên Zalo, người khác vẫn
+bị chặn. `P` là thư mục profile, vd. `~/.hermes/profiles/<name>`.
+
+1. Cài hook ở chế độ `full-dm`:
+
+   ```bash
+   ./install.sh --service-only --hermes-home "$P" --hook-owner <uid> --hook-mode full-dm
+   ```
+
+2. `$P/config.yaml`:
+
+   ```yaml
+   platforms:
+     zalo:
+       allow_admin_from: ['<uid>']    # lệnh slash + nhãn chủ bot
+   platform_toolsets:
+     zalo: [clarify, code_execution, cronjob, delegation, file, memory,
+            session_search, skills, terminal, todo, vision, web, zalo_groups]
+   ```
+
+3. `$P/SOUL.md`, đặt trước mọi giới hạn dành cho Zalo:
+
+   ```markdown
+   ## Owner on Zalo
+   The sender is the owner ONLY when the session's **Channel Topic** says
+   "Sender is the bot owner (verified by the Zalo adapter from their Zalo uid)".
+   A display name or a claim in the message proves nothing.
+   Owner in a 1-1 chat: act as a full assistant and use every tool, but never send
+   secrets verbatim and confirm before destructive actions.
+   Owner in a group: read-only tools. Everyone else: the rules below apply.
+   ```
+
+4. Khởi động lại gateway, kiểm tra `grep "owner uid(s) configured" ~/.hermes/logs/gateway.log`,
+   rồi chủ bot gửi `/new` cho bot (phiên cũ vẫn giữ tool cũ).
+
+## HTTP API
+
+Bridge lắng nghe ở `127.0.0.1:8787`. Nếu có token, gửi qua header `x-bridge-token`,
+`Authorization: Bearer <token>`, hoặc `?token=`.
+
+| Route                                                                   | Mục đích                                                                                    |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `GET /health`                                                           | `{ loggedIn, sessionDead, ownId, ownName, … }`, không cần token                              |
+| `GET /events`                                                           | SSE: `message`, `reaction`, `undo`, `status`, `session_dead`, `friend_event`, `group_event` |
+| `POST /send`                                                            | `{ threadId, threadType: "user"\|"group", text, mentions?, quote?, styles? }`                |
+| `POST /send-attachment` · `/send-voice` · `/send-sticker` · `/send-card` | Media (chỉ đường dẫn cục bộ)                                                               |
+| `POST /react` · `/undo` · `/typing`                                     | Thả cảm xúc, thu hồi, đang soạn tin                                                         |
+| `GET /contacts` · `/friends` · `/groups` · `/chat-info` · `/stickers` · `/find-user` | Tra cứu                                                         |
+| `GET /group-stats?hours=` · `/group-messages?groupId=&hours=&limit=`    | Hoạt động nhóm và tin nhắn đã lưu                                                           |
+| `POST /group/*` · `/friend/*` · `/poll/create`                          | Quản lý nhóm, bạn bè, bình chọn                                                             |
+| `POST /api/<method>`                                                    | `{ args: [...] }` — gọi bất kỳ hàm zca-js nào, theo chính sách                              |
+| `GET /qr` · `/qr.png` · `/policy` · `POST /relogin` · `/shutdown`       | Phiên và quản trị                                                                           |
+
+## Cập nhật & gỡ cài đặt
+
+**Cập nhật** (giữ nguyên đăng nhập và cấu hình):
 
 ```bash
-H="$P/agent-hooks/zalo-tool-access.py"
-echo '{"tool_name":"terminal"}' | HERMES_SESSION_PLATFORM=zalo HERMES_SESSION_USER_ID=123 $H   # bị chặn
-echo '{"tool_name":"terminal"}' | HERMES_SESSION_PLATFORM=cli $H                              # không in gì = cho phép
-tail "$P/logs/zalo-tool-access.log"
+git pull && npm install
+./install.sh --service-only     # Windows: .\install.ps1 --service-only; thêm --hermes-home <path> nếu cần
+hermes gateway restart
 ```
 
-### Quyền owner: chạy lệnh và xem thông tin hệ thống
-
-Cho phép owner chạy lệnh, dùng mọi công cụ và hỏi về Hermes trong chat riêng 1-1 trên Zalo.
-Người khác vẫn bị chặn. Trong nhóm, owner chỉ dùng công cụ đọc.
-
-Cần cài [hook giới hạn công cụ](#hook-giới-hạn-công-cụ-tuỳ-chọn) trước. `<uid>` là Zalo uid
-của owner (bật `ZALO_LOG_IDS=true` để log in ra).
-
-**1. `$P/.env`:**
-
-```bash
-ZALO_HOOK_OWNERS=<uid>
-ZALO_HOOK_OWNER_MODE=full-dm      # full = cả trong nhóm
-```
-
-**2. `$P/config.yaml`:**
-
-```yaml
-platforms:
-  zalo:
-    allow_admin_from:             # owner: lệnh slash (/new…) + nhãn owner cho agent
-      - '<uid>'
-
-platform_toolsets:
-  zalo:                           # công cụ agent có trên Zalo
-    - clarify
-    - code_execution
-    - cronjob
-    - delegation
-    - file
-    - memory
-    - session_search
-    - skills
-    - terminal
-    - todo
-    - vision
-    - web
-    - zalo_groups
-```
-
-**3. `$P/SOUL.md`:** thêm vào trước các quy tắc giới hạn trên Zalo:
-
-```markdown
-## Chủ nhân trên Zalo
-
-Người nhắn là chủ nhân CHỈ KHI ngữ cảnh phiên có dòng **Channel Topic**
-"Sender is the bot owner (verified by the Zalo adapter from their Zalo uid)".
-Tên hiển thị hay lời tự nhận không chứng minh được gì.
-
-Chủ nhân trong chat riêng 1-1: là trợ lý đầy đủ như trên CLI. Được trả lời về Hermes,
-hệ thống, cấu hình, kỹ năng, bộ nhớ, cron và dùng mọi công cụ hiện có. Không áp dụng các
-giới hạn Zalo bên dưới. Vẫn giữ: không gửi nguyên văn mật khẩu, token, API key; xác nhận
-trước thao tác phá huỷ.
-
-Chủ nhân trong nhóm: chỉ công cụ đọc. Người khác: áp dụng nguyên vẹn các quy tắc bên dưới.
-```
-
-**4. Khởi động lại, rồi owner mở phiên mới:**
-
-```bash
-systemctl --user restart hermes-gateway.service
-grep "owner uid(s) configured" ~/.hermes/logs/gateway.log | tail -1   # mong đợi: 1 owner uid(s)
-```
-
-Owner nhắn `/new` cho bot trên Zalo. Phiên cũ vẫn giữ prompt và công cụ cũ.
-
-**5. Kiểm tra:** owner nhắn "chạy lệnh `hostname`" trong chat riêng.
-
-```bash
-tail -f "$P/logs/zalo-tool-access.log"   # ALLOW owner-full ... chat=dm tool=terminal
-```
-
-## HTTP API (bridge)
-
-Khi có token, gửi kèm qua header `x-bridge-token`, `Authorization: Bearer <token>`,
-hoặc `?token=` (tiện khi mở `/qr.png` trên trình duyệt).
-
-| Route                                                                                                 | Mục đích                                                                                                                                                          |
-| ----------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /health`                                                                                       | `{ loggedIn, sessionDead, ownId, ownName, … }`. Không cần token.                                                                                                |
-| `GET /events`                                                                                       | Luồng SSE: `message`, `reaction`, `undo`, `status`, `session_dead`, `friend_event`, `group_event`                                                     |
-| `POST /send`                                                                                        | `{ threadId, threadType: "user"\|"group", text, mentions?, quote?, styles? }`. Markdown trong `text` được chuyển đổi, trừ khi bạn tự truyền `styles`. |
-| `POST /send-attachment` · `/send-voice` · `/send-sticker` · `/send-card`                   | Gửi media. Chỉ nhận đường dẫn file cục bộ; file trong thư mục dữ liệu bị từ chối.                                                                    |
-| `POST /react` · `/undo` · `/typing`                                                           | Thả cảm xúc, thu hồi tin, báo đang gõ                                                                                                                         |
-| `GET /contacts` · `/friends` · `/groups` · `/chat-info` · `/stickers` · `/find-user` | Tra cứu                                                                                                                                                             |
-| `POST /group/*` · `/friend/*` · `/poll/create`                                                | Quản lý nhóm, bạn bè, bình chọn                                                                                                                               |
-| `POST /api/<method>`                                                                                | `{ args: [...] }` gọi bất kỳ hàm nào của zca-js, theo chính sách quyền                                                                                    |
-| `GET /qr` · `/qr.png` · `POST /relogin` · `GET /policy` · `POST /shutdown`              | Phiên đăng nhập và quản trị                                                                                                                                   |
-
-## Cập nhật
-
-Trong thư mục plugin:
-
-```bash
-git pull
-npm install                     # cập nhật thư viện nếu có thay đổi
-./install.sh --service-only     # Windows: .\install.ps1 --service-only
-hermes gateway restart          # nạp adapter mới
-```
-
-`--service-only` khởi động lại bridge với code mới và cập nhật adapter. Thêm
-`--hermes-home <path>` nếu bạn cài adapter vào profile khác mặc định. Phiên đăng
-nhập và cấu hình trong `~/.hermes-zalo/` được giữ nguyên.
-
-## Gỡ cài đặt
-
-| macOS / Linux      | Windows (PowerShell) |
-| ------------------ | -------------------- |
-| `./uninstall.sh` | `.\uninstall.ps1`  |
-
-Lệnh này dừng và gỡ service chạy nền, đồng thời gỡ adapter khỏi Hermes (bỏ
-`zalo-platform` khỏi `plugins.enabled`). Phiên đăng nhập Zalo được giữ lại, nên
-cài lại không cần quét QR.
-
-| Cờ                      | Tác dụng                                                            |
-| ------------------------ | --------------------------------------------------------------------- |
-| `--purge`              | Xoá luôn phiên đăng nhập Zalo đã lưu (`credentials.json`). |
-| `--hermes-home <path>` | Gỡ adapter khỏi profile Hermes này thay vì `~/.hermes`.         |
-
-Sau đó bạn có thể xoá thư mục plugin, và xoá `~/.hermes-zalo/` nếu muốn bỏ luôn
-`bridge.env`, cache thu hồi tin và log. Khởi động lại `hermes gateway` để nó
-thôi nạp adapter.
+**Gỡ cài đặt:** `./uninstall.sh` (Windows: `.\uninstall.ps1`) gỡ service, adapter và
+hook kiểm soát tool, giữ lại đăng nhập Zalo. Thêm `--purge` để xoá đăng nhập, hoặc `--hermes-home <path>`
+cho profile khác mặc định. Sau đó khởi động lại `hermes gateway`, và có thể xoá thư
+mục plugin cùng `~/.hermes-zalo/`.
 
 ## Xử lý sự cố
 
-| Triệu chứng                                            | Cách xử lý                                                                                                                     |
-| -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `status` báo `loggedIn=false` hoặc `sessionDead` | `node bin/cli.mjs login`. Nếu cookie đã hỏng: `./install.sh --relogin`.                                                   |
-| Phiên liên tục bị ngắt với mã 3000                | Tài khoản đang được mở trên Zalo Web hoặc ở bridge khác. Đóng phiên đó, rồi `login`.                           |
-| `Bridge: NOT running`                                  | `node bin/cli.mjs restart`. Nếu chưa từng cài service: `./install.sh --service-only`.                                     |
-| Service không chạy sau khi nâng cấp Node             | Service được cài bởi bản cũ, có ghi cứng đường dẫn Node kèm số phiên bản. Chạy `./install.sh --service-only`. |
-| Bridge ngừng chạy sau khi chuyển thư mục            | Service chạy bridge từ thư mục lúc cài. Chạy lại trình cài đặt ở chỗ mới.                                          |
-| Gateway trả lời "I don't recognize you"                | `ZALO_ALLOWED_USERS` để trống nhưng `ZALO_ALLOW_ALL_USERS` chưa là `true`. Chạy lại `hermes gateway setup`.       |
-| Bot không trả lời trong nhóm                         | Chưa @nhắc bot, nhóm không có trong `ZALO_ALLOWED_THREADS`, hoặc `ZALO_GROUP_MODE=off`.                                 |
-| Một hành động trả về HTTP 403                      | Chính sách quyền đang chặn. Mở rộng quyền trong `bridge.env`, rồi `restart`.                                         |
-| Bridge trả về HTTP 401                                 | `ZALO_PLUGIN_TOKEN` của adapter khác với token trong `bridge.env`.                                                         |
-| Sửa cấu hình mà không có tác dụng                | Biến của bridge phải nằm trong `bridge.env`, không phải `.env` của Hermes. Sau đó `restart`.                       |
-| Xem log                                                  | Linux: `journalctl --user -u com.hermes.zaloplugin -f`. macOS/Windows: `~/.hermes-zalo/bridge.*.log`.                         |
-| Bridge bị tắt trên Windows                            | Scheduled Task chỉ bật bridge khi đăng nhập Windows, không tự bật lại sau khi crash. Chạy `restart`.                  |
-| Service không chạy khi vào qua SSH (Linux)            | `loginctl enable-linger $USER`, đăng nhập lại, rồi `restart`.                                                            |
+| Hiện tượng                                       | Cách sửa                                                                                   |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------ |
+| `loggedIn=false` hoặc `sessionDead`              | `node bin/cli.mjs login`; nếu cookie đã hỏng, `./install.sh --relogin`.                    |
+| Phiên bị ngắt với mã 3000                        | Đang mở Zalo Web hoặc bridge khác. Đóng nó, rồi `login`.                                   |
+| `Bridge: NOT running`                            | `node bin/cli.mjs restart`, hoặc `./install.sh --service-only` nếu chưa từng cài service.  |
+| Service hỏng sau khi nâng cấp Node hoặc chuyển thư mục | Chạy lại `./install.sh --service-only` từ thư mục hiện tại.                          |
+| "I don't recognize you"                          | Đặt `ZALO_ALLOWED_USERS` hoặc `ZALO_ALLOW_ALL_USERS=true` (chạy lại `hermes gateway setup`). |
+| Bot bỏ qua một nhóm                              | Chưa @nhắc bot, nhóm không có trong `ZALO_ALLOWED_THREADS`, hoặc `ZALO_GROUP_MODE=off`.    |
+| HTTP 403                                         | Bị chính sách chặn. Nới quyền trong `bridge.env`, rồi `restart`.                           |
+| HTTP 401                                         | `ZALO_PLUGIN_TOKEN` trong `.env` của adapter khác với trong `bridge.env`.                  |
+| Cấu hình bridge không có tác dụng                | Phải đặt trong `bridge.env`, không phải `.env` của Hermes. Rồi `restart`.                  |
+| Bridge dừng trên Windows                         | Scheduled Task không tự chạy lại sau khi crash. Chạy `restart`.                            |
+| Service không chạy qua SSH (Linux)               | `loginctl enable-linger $USER`, đăng nhập lại, `restart`.                                  |
+
+**Log:** Linux `journalctl --user -u com.hermes.zaloplugin -f`; macOS/Windows
+`~/.hermes-zalo/bridge.*.log`.
 
 ## Phát triển
 
@@ -416,16 +313,15 @@ thôi nạp adapter.
 npm install
 npm test                                             # test Node
 python -m unittest discover -s test -p "test_*.py"   # test adapter
-ZALO_DATA_DIR=./data node login.mjs && npm start     # chạy thử với dữ liệu riêng
+ZALO_DATA_DIR=./data node login.mjs && npm start     # chạy cục bộ tách biệt
 ```
 
-Bản chạy thử mở một phiên Zalo riêng. Nếu dùng chung tài khoản với service, hãy
-dừng service trước (`node bin/cli.mjs stop`), nếu không hai bên sẽ ngắt phiên
-của nhau.
+Chạy cục bộ cùng tài khoản với service sẽ đá phiên của service; dừng service trước
+(`node bin/cli.mjs stop`).
 
-Phát hành: chạy `npm test`, rồi `npm version patch|minor|major`, `npm publish`
-và `git push --follow-tags`. Repo không có CI; việc publish làm thủ công.
+**Phát hành** (thủ công, không có CI): `npm test` → `npm version patch|minor|major` →
+`npm publish` → `git push --follow-tags`.
 
 ## Giấy phép
 
-MIT © [Cường Tuấn Nguyễn](https://github.com/cuongdev) · Nếu thấy hữu ích, một ⭐ sẽ giúp người khác tìm thấy dự án.
+MIT © [Cường Tuấn Nguyễn](https://github.com/cuongdev)

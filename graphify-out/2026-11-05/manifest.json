@@ -12,9 +12,9 @@
     "semantic_hash": "f249b7ff9f0b9e44092963aa540c2600"
   },
   "hermes-plugin/adapter.py": {
-    "mtime": 1793869045.9260943,
-    "seen": 1793869405.744532,
-    "ast_hash": "ec79ddd402431787d6a616d8aa600dea",
+    "mtime": 1793871380.7453232,
+    "seen": 1793871437.036598,
+    "ast_hash": "1c2178ab4c7e59530fff64a07ce4dab8",
     "semantic_hash": ""
   },
   "hermes-plugin/plugin.yaml": {
@@ -96,15 +96,15 @@
     "semantic_hash": ""
   },
   "README.md": {
-    "mtime": 1793869107.9365294,
-    "seen": 1793869405.7446184,
-    "ast_hash": "2724f465a206661869e9e8bb03b0db09",
+    "mtime": 1793871381.7893615,
+    "seen": 1793871437.0366805,
+    "ast_hash": "495025377b8d4129167a76d894fa3737",
     "semantic_hash": ""
   },
   "README.vi.md": {
-    "mtime": 1793869107.9365294,
-    "seen": 1793869405.7446208,
-    "ast_hash": "2cc98d8378752e3e43d0427c424c61f7",
+    "mtime": 1793871381.7933617,
+    "seen": 1793871437.0366828,
+    "ast_hash": "8a8724ced22ee7192afc52095a051efd",
     "semantic_hash": ""
   },
   "assets/logo.svg": {
@@ -150,9 +150,9 @@
     "semantic_hash": ""
   },
   "test/test_adapter.py": {
-    "mtime": 1793869063.1907742,
-    "seen": 1793869405.744596,
-    "ast_hash": "754ce730ffdc57fe8064a5ce99a0f4f2",
+    "mtime": 1793871381.7893615,
+    "seen": 1793871437.0366602,
+    "ast_hash": "8713e72d0695504d7cb2db1aaa118df2",
     "semantic_hash": ""
   },
   "CLAUDE.md": {
@@ -222,15 +222,15 @@
     "semantic_hash": ""
   },
   "hooks/zalo-tool-access.py": {
-    "mtime": 1793869090.7678568,
-    "seen": 1793869405.7445414,
-    "ast_hash": "fbd024ea5a4175dbc36fed206fa5b9b3",
+    "mtime": 1793870849.0497887,
+    "seen": 1793871437.036607,
+    "ast_hash": "1c2d3f2e7dc5cd6a4fe67b589864b7ff",
     "semantic_hash": ""
   },
   "test/test_tool_access_hook.py": {
-    "mtime": 1793869090.771857,
-    "seen": 1793869405.7445989,
-    "ast_hash": "72dca99475a08bbcf8e46707bbd1cd50",
+    "mtime": 1793870861.8142598,
+    "seen": 1793871437.0366623,
+    "ast_hash": "23a6e580d991243b55c731850e9d43dd",
     "semantic_hash": ""
   },
   "package-lock.json": {

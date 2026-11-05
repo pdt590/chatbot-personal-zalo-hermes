@@ -1,4 +1,5 @@
-// uninstall.mjs — remove the background service for the Hermes Zalo plugin.
+// uninstall.mjs — remove the background service, the Hermes adapter and the
+// tool access hook of the Hermes Zalo plugin.
 // Cross-platform. Optionally wipe saved credentials.
 //
 //   node uninstall.mjs              # stop + remove the auto-start service
@@ -12,6 +13,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { credentialsPath, dataDir, resolveHermesHome } from "./paths.js";
+import { HOOK_FILE, removePreToolHook } from "./hermesConfig.js";
 
 const argv = process.argv.slice(2);
 const PURGE = argv.includes("--purge");
@@ -96,6 +98,30 @@ function removeHermesPlugin() {
   } catch (e) {
     log(`⚠ Could not edit config.yaml: ${e.message}`);
     log(`  Manually remove "zalo-platform" from plugins.enabled in ${cfgPath}`);
+  }
+  removeToolAccessHook(hermesHome, cfgPath);
+}
+
+// Mirror of install.mjs installToolAccessHook(): drop the hook script and its
+// hooks.pre_tool_call entry. ZALO_HOOK_* lines in .env are left for a reinstall.
+function removeToolAccessHook(hermesHome, cfgPath) {
+  const hookDir = path.join(hermesHome, "agent-hooks");
+  const dest = path.join(hookDir, HOOK_FILE);
+  if (fs.existsSync(dest)) {
+    fs.rmSync(dest, { force: true });
+    log(`✓ Removed tool access hook: ${dest}`);
+    try { fs.rmdirSync(hookDir); } catch { /* not empty: other hooks live there */ }
+  }
+  if (!fs.existsSync(cfgPath)) return;
+  try {
+    const r = removePreToolHook(fs.readFileSync(cfgPath, "utf-8"));
+    if (r.removed) {
+      fs.writeFileSync(cfgPath, r.text);
+      log("✓ Removed the tool access hook from hooks.pre_tool_call in config.yaml");
+    }
+  } catch (e) {
+    log(`⚠ Could not edit config.yaml: ${e.message}`);
+    log(`  Manually remove the ${HOOK_FILE} entry from hooks.pre_tool_call in ${cfgPath}`);
   }
 }
 

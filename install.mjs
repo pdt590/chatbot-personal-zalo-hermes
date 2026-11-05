@@ -8,6 +8,9 @@
 //   node install.mjs --service-only  # (re)install just the background service
 //   node install.mjs --hermes-home ~/hermes-work   # install the adapter into this
 //                                    # Hermes profile instead of ~/.hermes
+//   node install.mjs --with-hook     # also install the tool-access hook
+//   node install.mjs --hook-owner <uid> [--hook-mode read|full-dm|full]
+//                                    # hook + owner settings in the profile .env
 //
 // After this, the end-user only needs:  hermes gateway setup  → choose Zalo.
 
@@ -18,7 +21,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { dataDir, logDir, resolveHermesHome } from "./paths.js";
 import { restartService, serviceInstalled, stopService } from "./service.js";
-import { enablePlatformToolsets, readProvidedToolsets } from "./hermesConfig.js";
+import {
+  HOOK_FILE, addPreToolHook, enablePlatformToolsets, readProvidedToolsets, setEnvVar,
+} from "./hermesConfig.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
@@ -26,6 +31,27 @@ const has = (f) => argv.includes(f);
 const NO_SERVICE = has("--no-service");
 const RELOGIN = has("--relogin") || has("--force");
 const SERVICE_ONLY = has("--service-only");
+// `--name value` or `--name=value`; undefined when absent.
+function flag(name) {
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === name) {
+      const v = argv[i + 1];
+      if (v == null || v.startsWith("-")) die(`${name} requires a value`);
+      return v;
+    }
+    if (argv[i].startsWith(`${name}=`)) return argv[i].slice(name.length + 1);
+  }
+  return undefined;
+}
+const HOOK_OWNER = flag("--hook-owner");
+const HOOK_MODE = flag("--hook-mode");
+const WITH_HOOK = has("--with-hook") || HOOK_OWNER != null || HOOK_MODE != null;
+if (HOOK_OWNER != null && !/^\d+(,\d+)*$/.test(HOOK_OWNER.replace(/\s/g, ""))) {
+  die("--hook-owner takes Zalo uid(s): digits, comma-separated");
+}
+if (HOOK_MODE != null && !["read", "full-dm", "full"].includes(HOOK_MODE)) {
+  die("--hook-mode must be read, full-dm or full");
+}
 
 const PLATFORM = process.platform; // 'darwin' | 'linux' | 'win32'
 
@@ -329,6 +355,73 @@ function installHermesPlugin() {
     log(`  Manually add "zalo-platform" under plugins.enabled in ${cfgPath}`);
   }
   enablePluginToolsets(cfgPath, path.join(src, "plugin.yaml"));
+  installToolAccessHook(hermesHome, cfgPath);
+}
+
+// ── 5. Optional pre_tool_call hook limiting what Zalo users can make the agent do ─
+// Opt-in (--with-hook / --hook-owner / --hook-mode): with no owner set it blocks
+// every tool for Zalo users. Once installed, re-runs keep it up to date.
+function installToolAccessHook(hermesHome, cfgPath) {
+  const src = path.join(__dirname, "hooks", HOOK_FILE);
+  const dest = path.join(hermesHome, "agent-hooks", HOOK_FILE);
+  const installed = fs.existsSync(dest);
+  if (!WITH_HOOK && !installed) {
+    log("• Tool access hook not installed (optional: re-run with --with-hook).");
+    return;
+  }
+  if (!fs.existsSync(src)) {
+    log(`⚠ hooks/${HOOK_FILE} not found in package — skipping the tool access hook.`);
+    return;
+  }
+  step(5, installed ? "Updating the tool access hook…" : "Installing the tool access hook…");
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  fs.mkdirSync(path.join(hermesHome, "logs"), { recursive: true });
+  fs.copyFileSync(src, dest);
+  if (PLATFORM !== "win32") fs.chmodSync(dest, 0o700);
+  log(`✓ Hook copied to ${dest}`);
+
+  const command = PLATFORM === "win32" ? `python "${dest}"` : dest;
+  let status;
+  try {
+    const before = fs.existsSync(cfgPath) ? fs.readFileSync(cfgPath, "utf-8") : "";
+    const r = addPreToolHook(before, command);
+    status = r.status;
+    if (status !== "already") fs.writeFileSync(cfgPath, r.text);
+    log(status === "already" ? "✓ Hook already registered in config.yaml"
+        : status === "updated" ? "✓ Updated the hook command in config.yaml"
+        : "✓ Registered the hook under hooks.pre_tool_call in config.yaml");
+  } catch (e) {
+    log(`⚠ Could not register the hook: ${e.message}`);
+    log(`  Add under hooks.pre_tool_call in ${cfgPath}:`);
+    log(`    - command: ${JSON.stringify(command)}\n      timeout: 10\n      fail_closed: true`);
+  }
+
+  const envPath = path.join(hermesHome, ".env");
+  let envText = fs.existsSync(envPath) ? fs.readFileSync(envPath, "utf-8") : "";
+  const settings = [
+    ["ZALO_HOOK_OWNERS", HOOK_OWNER?.replace(/\s/g, "")],
+    ["ZALO_HOOK_OWNER_MODE", HOOK_MODE],
+  ];
+  let changed = false;
+  for (const [key, value] of settings) {
+    if (value == null) continue;
+    const r = setEnvVar(envText, key, value);
+    envText = r.text;
+    changed ||= r.changed;
+    log(`✓ ${key}=${value} in ${envPath}`);
+  }
+  if (changed) fs.writeFileSync(envPath, envText, { mode: 0o600 });
+  if (!/^\s*ZALO_HOOK_OWNERS=\S/m.test(envText)) {
+    log("⚠ No ZALO_HOOK_OWNERS set: every Zalo user is blocked from all tools.");
+    log("  Set one with --hook-owner <uid> (ZALO_LOG_IDS=true logs uids).");
+  }
+
+  if (status === "added" || status === "updated") {
+    const profile = path.basename(path.dirname(hermesHome)) === "profiles" ? path.basename(hermesHome) : null;
+    log("  Hermes runs a new or changed hook only after you approve it:");
+    log(`    hermes ${profile ? `-p ${profile} ` : ""}--accept-hooks   (or HERMES_ACCEPT_HOOKS=1)`);
+    log("  then restart the gateway.");
+  }
 }
 
 // Turn on every toolset the plugin provides (plugin.yaml provides_toolsets)

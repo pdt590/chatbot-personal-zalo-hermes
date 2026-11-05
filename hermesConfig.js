@@ -85,3 +85,148 @@ export function enablePlatformToolsets(cfgText, platform, toolsets) {
   lines.splice(lastItem + 1, 0, ...added.map((t) => `${" ".repeat(itemIndent)}- ${t}`));
   return { text: lines.join("\n"), status: "added", added };
 }
+
+// ── hooks.pre_tool_call: register / unregister the Zalo tool-access hook ─────
+
+export const HOOK_FILE = "zalo-tool-access.py";
+
+const isBlank = (l) => !l.trim() || l.trim().startsWith("#");
+
+/** Index just past the last line of the block whose key sits at `keyIdx`. */
+function blockEnd(lines, keyIdx) {
+  const keyIndent = indentOf(lines[keyIdx]);
+  let end = keyIdx + 1;
+  for (let j = keyIdx + 1; j < lines.length; j++) {
+    if (isBlank(lines[j])) continue;
+    const ind = indentOf(lines[j]);
+    // A sequence may sit at the key's own indent ("key:\n- a").
+    if (ind > keyIndent || (ind === keyIndent && /^\s*-(\s|$)/.test(lines[j]))) {
+      end = j + 1;
+      continue;
+    }
+    break;
+  }
+  return end;
+}
+
+function hookEntry(command, indent) {
+  const pad = " ".repeat(indent);
+  return [
+    `${pad}- command: ${JSON.stringify(command)}`,
+    `${pad}  timeout: 10`,
+    `${pad}  fail_closed: true`,
+  ];
+}
+
+/**
+ * Add a `hooks.pre_tool_call` entry running `command`, unless an entry for
+ * zalo-tool-access.py is already there (then its command is refreshed).
+ *
+ * @returns {{ text: string, status: "already"|"updated"|"added" }}
+ */
+export function addPreToolHook(cfgText, command) {
+  const text = String(cfgText || "");
+  const lines = text.split("\n");
+
+  // Existing entry: keep it, but point it at `command`.
+  const existing = lines.findIndex((l) => /^\s*-?\s*command:/.test(l) && l.includes(HOOK_FILE));
+  if (existing !== -1) {
+    const m = lines[existing].match(/^(\s*-?\s*command:\s*)(.*?)\s*$/);
+    const value = JSON.stringify(command);
+    if (m[2] === value) return { text, status: "already" };
+    lines[existing] = m[1] + value;
+    return { text: lines.join("\n"), status: "updated" };
+  }
+
+  let top = lines.findIndex((l) => /^hooks:/.test(l));
+  if (top === -1) {
+    const sep = text.length && !text.endsWith("\n") ? "\n" : "";
+    const block = ["hooks:", "  pre_tool_call:", ...hookEntry(command, 4)].join("\n");
+    return { text: `${text}${sep}${block}\n`, status: "added" };
+  }
+  if (/^hooks:\s*(\{\s*\}|null|~)?\s*(#.*)?$/.test(lines[top])) {
+    lines[top] = "hooks:";
+  } else {
+    throw new Error("hooks: is not a mapping; add the pre_tool_call entry by hand");
+  }
+
+  const end = blockEnd(lines, top);
+  let keyIdx = -1;
+  let childIndent = 2;
+  for (let i = top + 1; i < end; i++) {
+    if (isBlank(lines[i])) continue;
+    if (childIndent === 2 && indentOf(lines[i]) > 0) childIndent = indentOf(lines[i]);
+    if (/^\s+pre_tool_call:/.test(lines[i]) && indentOf(lines[i]) === childIndent) {
+      keyIdx = i;
+      break;
+    }
+  }
+  if (keyIdx === -1) {
+    lines.splice(top + 1, 0, `${" ".repeat(childIndent)}pre_tool_call:`, ...hookEntry(command, childIndent + 2));
+    return { text: lines.join("\n"), status: "added" };
+  }
+  if (/:\s*(\[\s*\]|null|~)\s*(#.*)?$/.test(lines[keyIdx])) {
+    lines[keyIdx] = `${" ".repeat(childIndent)}pre_tool_call:`;
+  } else if (!/:\s*(#.*)?$/.test(lines[keyIdx])) {
+    throw new Error("hooks.pre_tool_call is not a list; add the entry by hand");
+  }
+  const listEnd = blockEnd(lines, keyIdx);
+  let itemIndent = childIndent + 2;
+  for (let j = keyIdx + 1; j < listEnd; j++) {
+    const m = lines[j].match(/^(\s*)-(\s|$)/);
+    if (m) { itemIndent = m[1].length; break; }
+  }
+  // Insert after the last non-blank line of the list.
+  let at = listEnd;
+  while (at > keyIdx + 1 && isBlank(lines[at - 1])) at--;
+  lines.splice(at, 0, ...hookEntry(command, itemIndent));
+  return { text: lines.join("\n"), status: "added" };
+}
+
+/**
+ * Remove the `hooks.pre_tool_call` entry that runs zalo-tool-access.py.
+ * An emptied list becomes `pre_tool_call: []`; other hooks are untouched.
+ *
+ * @returns {{ text: string, removed: boolean }}
+ */
+export function removePreToolHook(cfgText) {
+  const text = String(cfgText || "");
+  const lines = text.split("\n");
+  const cmd = lines.findIndex((l) => /^\s*-?\s*command:/.test(l) && l.includes(HOOK_FILE));
+  if (cmd === -1) return { text, removed: false };
+
+  // The item starts at the "-" line at or above the command line.
+  let start = cmd;
+  while (start > 0 && !/^\s*-(\s|$)/.test(lines[start])) start--;
+  const dashIndent = indentOf(lines[start]);
+  let end = start + 1;
+  for (let j = start + 1; j < lines.length; j++) {
+    if (isBlank(lines[j])) continue;
+    if (indentOf(lines[j]) > dashIndent) { end = j + 1; continue; }
+    break;
+  }
+  lines.splice(start, end - start);
+
+  // Find the pre_tool_call key above the removed item; empty list → [].
+  let key = start - 1;
+  while (key >= 0 && !/^\s*pre_tool_call:\s*(#.*)?$/.test(lines[key])) key--;
+  if (key >= 0 && blockEnd(lines, key) === key + 1) {
+    lines[key] = lines[key].replace(/pre_tool_call:.*/, "pre_tool_call: []");
+  }
+  return { text: lines.join("\n"), removed: true };
+}
+
+/** Set `KEY=value` in a dotenv text (replaces an existing, uncommented line). */
+export function setEnvVar(envText, key, value) {
+  const text = String(envText || "");
+  const lines = text.split("\n");
+  const idx = lines.findIndex((l) => new RegExp(`^\\s*(export\\s+)?${key}=`).test(l));
+  const line = `${key}=${value}`;
+  if (idx !== -1) {
+    if (lines[idx].trim() === line) return { text, changed: false };
+    lines[idx] = line;
+    return { text: lines.join("\n"), changed: true };
+  }
+  const sep = text.length && !text.endsWith("\n") ? "\n" : "";
+  return { text: `${text}${sep}${line}\n`, changed: true };
+}

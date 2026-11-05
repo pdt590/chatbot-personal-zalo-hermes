@@ -106,13 +106,16 @@ Commands:
   setup        Log in (QR) if needed and install a background auto-start service
                --hermes-home <path>   copy the adapter into this Hermes profile
                                       instead of ~/.hermes (also reads HERMES_HOME)
+               --with-hook            also install the tool access hook
+               --hook-owner <uid>     hook + owner uid(s) in the profile .env
+               --hook-mode <m>        owner mode: read | full-dm | full
   login        QR login only (--force to re-scan an existing session)
   start        Run the bridge in the foreground (Ctrl-C to stop)
   restart      Restart (or start) the background service; applies bridge.env
   stop         Stop the background service (stays installed; 'restart' brings it back)
   status       Show bridge health and the data directory
-  uninstall    Remove the background service (--purge also deletes credentials)
-               --hermes-home <path>   remove the adapter from that Hermes profile
+  uninstall    Remove the service, adapter and tool access hook (--purge also deletes credentials)
+               --hermes-home <path>   remove the adapter and hook from that Hermes profile
   help         Show this message
 
 Data lives in ~/.hermes-zalo/ (override with ZALO_DATA_DIR). Bridge settings
