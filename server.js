@@ -10,6 +10,7 @@
 //   ZALO_QR_PATH          (default <data dir>/qr.png)
 //   ZALO_SELF_LISTEN      (1/true to receive own messages; default off)
 //   ZALO_FORCE_QR         (1/true to ignore saved credentials and re-QR)
+//   ZALO_GROUP_LOG_DAYS   (days of group messages kept for stats/summaries; default 3, 0 = memory only)
 //   ZALO_ALLOWED_ACTION_GROUPS / ZALO_ALLOW_DESTRUCTIVE /
 //   ZALO_ALLOWED_ACTIONS / ZALO_DENIED_ACTIONS   (action policy, see permissions.js)
 
@@ -18,8 +19,9 @@ import express from "express";
 import fs from "node:fs";
 import path from "node:path";
 import { ZaloClient } from "./zaloClient.js";
+import { GroupLog } from "./groupLog.js";
 import { createPolicy } from "./permissions.js";
-import { credentialsPath, qrPath, cliMsgDir, dataDir, loadBridgeEnv } from "./paths.js";
+import { credentialsPath, qrPath, cliMsgDir, groupLogDir, dataDir, loadBridgeEnv } from "./paths.js";
 
 const bridgeEnv = loadBridgeEnv(); // must run before any setting below is read
 
@@ -37,7 +39,14 @@ const QR_PATH = qrPath();
 const SELF_LISTEN = envFlag("ZALO_SELF_LISTEN");
 const FORCE_QR = envFlag("ZALO_FORCE_QR");
 
+// Group message log for group stats/summaries (days on disk; 0 = memory only).
+const groupLog = new GroupLog({ dir: groupLogDir(), retentionDays: envInt("ZALO_GROUP_LOG_DAYS", 3) });
+const loadedGroupMsgs = groupLog.load();
+if (loadedGroupMsgs) console.log(`[bridge] loaded ${loadedGroupMsgs} logged group message(s)`);
+groupLog.startPruning();
+
 const client = new ZaloClient({
+  groupLog,
   credentialsPath: CREDENTIALS_PATH,
   qrPath: QR_PATH,
   selfListen: SELF_LISTEN,
@@ -79,6 +88,8 @@ const ROUTE_ACTION = {
   "GET /find-user": "findUser",
   "GET /groups": "getAllGroups",
   "GET /contacts": "getAllGroups",
+  "GET /group-stats": "getAllGroups",
+  "GET /group-messages": "getGroupChatHistory",
   "GET /chat-info": "getUserInfo", // getGroupInfo when threadType=group
   "GET /stickers": "getStickers",
   "POST /group/create": "createGroup",
@@ -451,6 +462,50 @@ app.get(
 
 // ── Groups ────────────────────────────────────────────────────────────────
 app.get("/groups", route(async () => ({ success: true, groups: await client.getAllGroups() })));
+
+const hoursAgo = (q, fallback) => {
+  const h = parseFloat(q);
+  return Date.now() - (Number.isFinite(h) && h > 0 ? Math.min(h, 24 * 31) : fallback) * 3_600_000;
+};
+
+// Every group with its name, member count and logged activity.
+// GET /group-stats?hours=24
+app.get(
+  "/group-stats",
+  route(async (_b, req) => {
+    const hours = parseFloat(req.query.hours) || 24;
+    const activity = groupLog.stats(hoursAgo(req.query.hours, 24));
+    const { groups } = await client.listContacts();
+    return {
+      success: true,
+      hours,
+      // Activity only counts messages heard while the bridge was running.
+      loggedSince: groupLog.oldest(),
+      groups: groups.map((g) => ({
+        ...g,
+        ...(activity[g.id] || { messages: 0, senders: 0, topSenders: [], lastMessageAt: null }),
+      })),
+    };
+  }),
+);
+
+// Logged messages of one group, oldest first.
+// GET /group-messages?groupId=..&hours=24&limit=300
+app.get(
+  "/group-messages",
+  route(async (_b, req) => {
+    const { groupId } = req.query;
+    if (!groupId) throw badRequest("groupId required");
+    const n = parseInt(req.query.limit || "300", 10);
+    const limit = Number.isFinite(n) ? Math.min(Math.max(n, 1), 2000) : 300;
+    return {
+      success: true,
+      groupId,
+      loggedSince: groupLog.oldest(),
+      messages: groupLog.messages(groupId, { sinceMs: hoursAgo(req.query.hours, 24), limit }),
+    };
+  }),
+);
 // Friendly id+name list of groups and friends, for the setup wizard.
 app.get("/contacts", route(async () => ({ success: true, ...(await client.listContacts()) })));
 app.post(

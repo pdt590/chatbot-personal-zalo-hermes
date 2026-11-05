@@ -11,6 +11,13 @@ description: >
   logged in (via QR). NOTE: zca-js is an UNOFFICIAL API — use a secondary
   account; Zalo may rate-limit or lock automated accounts.
 author: cuong
+provides_tools:
+  - zalo_group_stats
+  - zalo_group_messages
+# Toolsets this plugin registers. `hermes-zalo-plugin setup` adds each one to
+# platform_toolsets.zalo in the Hermes config. Keep in sync with register().
+provides_toolsets:
+  - zalo_groups
 requires_env:
   - name: ZALO_PLUGIN_URL
     description: "Base URL of the running zca-js bridge (e.g. http://127.0.0.1:8787)"
@@ -60,6 +67,10 @@ optional_env:
   - name: ZALO_INFO_MIN_INTERVAL_MS
     description: "Minimum milliseconds between read-info calls to Zalo (rate limiter). On suspected rate-limit, the bridge backs off exponentially and serves stale cache. Default 1500. Bridge-side env."
     prompt: "Min interval between info calls in ms (default 1500)"
+    password: false
+  - name: ZALO_GROUP_LOG_DAYS
+    description: "Days the bridge keeps its log of group messages (owner-only files under the data dir), used by the zalo_group_stats / zalo_group_messages agent tools. 0 keeps the last day in memory only. Default 3. Bridge-side env."
+    prompt: "Days to keep the group message log (default 3, 0 = memory only)"
     password: false
   - name: ZALO_ALLOWED_ACTION_GROUPS
     description: "Comma-separated permission groups the agent may use, by danger level: read,send,interact,manage,destructive (or 'all'). Default: read,send,interact. 'destructive' (giải tán nhóm, xoá tin, block, đổi profile…) is OFF even under 'all' unless ZALO_ALLOW_DESTRUCTIVE=true."

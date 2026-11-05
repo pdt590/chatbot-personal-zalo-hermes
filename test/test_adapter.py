@@ -5,6 +5,7 @@ here so the tests run without a Hermes checkout:  python -m unittest discover -s
 """
 
 import asyncio
+import json
 import importlib.util
 import os
 import sys
@@ -280,6 +281,100 @@ class EmptyImageTagTest(unittest.TestCase):
     def test_real_images_and_text_untouched(self):
         text = "xem ![a](https://x/y.png) nhé"
         self.assertEqual(adapter._strip_empty_image_tags(text), text)
+
+
+class GroupToolsTest(unittest.TestCase):
+    CONTACTS = {"success": True, "groups": [
+        {"id": "111", "name": "Bot Group", "members": 3},
+        {"id": "222", "name": "Cộng Đồng HubPlus AI", "members": 13},
+        {"id": "333", "name": "Cộng đồng AI Native Lab 01", "members": 999}]}
+
+    def setUp(self):
+        self.calls = []
+
+        def fake_get(path, params=None):
+            self.calls.append((path, params))
+            if path == "/contacts":
+                return self.CONTACTS
+            if path == "/group-messages":
+                return {"success": True, "loggedSince": None, "messages": [
+                    {"t": 1793862124026, "u": "7", "n": "Hubplus", "x": "chào cả nhóm", "s": 0},
+                    {"t": 1793862130000, "u": "42", "n": "Lily", "x": "", "k": "chat.photo", "s": 1}]}
+            if path == "/group-stats":
+                return {"success": True, "groups": [
+                    {"id": "111", "name": "Bot Group", "members": 3, "messages": 2, "senders": 1,
+                     "topSenders": [{"id": "7", "name": "Hubplus", "count": 2}], "lastMessageAt": 1793862124026},
+                    {"id": "222", "name": "Cộng Đồng HubPlus AI", "members": 13, "messages": 5, "senders": 2,
+                     "topSenders": [], "lastMessageAt": None}]}
+            return {"error": "unexpected"}
+
+        self._get = adapter._bridge_get
+        adapter._bridge_get = fake_get
+
+    def tearDown(self):
+        adapter._bridge_get = self._get
+
+    def test_stats_sorted_by_activity(self):
+        out = json.loads(adapter._tool_group_stats({"hours": 24}))
+        self.assertEqual([g["name"] for g in out["groups"]], ["Cộng Đồng HubPlus AI", "Bot Group"])
+        self.assertEqual(out["groups"][1]["top_senders"], ["Hubplus (2)"])
+
+    def test_messages_by_accentless_name(self):
+        out = json.loads(adapter._tool_group_messages({"group": "cong dong hubplus"}))
+        self.assertTrue(out["success"])
+        self.assertEqual(out["group_id"], "222")
+        self.assertIn("Hubplus: chào cả nhóm", out["messages"])
+        self.assertIn("Lily (bot): [chat.photo]", out["messages"])
+
+    def test_ambiguous_name_lists_matches(self):
+        out = json.loads(adapter._tool_group_messages({"group": "cộng đồng"}))
+        self.assertFalse(out["success"])
+        self.assertEqual({m["id"] for m in out["matches"]}, {"222", "333"})
+
+    def test_defaults_to_current_group(self):
+        env = {"HERMES_SESSION_PLATFORM": "zalo", "HERMES_SESSION_CHAT_TYPE": "group",
+               "HERMES_SESSION_CHAT_ID": "111"}
+        old = {k: os.environ.get(k) for k in env}
+        os.environ.update(env)
+        try:
+            out = json.loads(adapter._tool_group_messages({}))
+        finally:
+            for k, v in old.items():
+                os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+        self.assertEqual(out["group_id"], "111")
+        self.assertEqual(self.calls[-1], ("/group-messages", {"groupId": "111", "hours": 24, "limit": 300}))
+
+    def test_outside_a_group_needs_a_name(self):
+        self.assertFalse(json.loads(adapter._tool_group_messages({}))["success"])
+
+
+class ManifestTest(unittest.TestCase):
+    """plugin.yaml must declare what register() registers (the installer reads it)."""
+
+    def test_provides_match_register(self):
+        registered = []
+
+        class Ctx:
+            def register_tool(self, **kw):
+                registered.append((kw["name"], kw["toolset"]))
+
+            def register_platform(self, **kw):
+                pass
+
+        adapter.register(Ctx())
+        text = (Path(adapter.__file__).parent / "plugin.yaml").read_text(encoding="utf-8")
+
+        def listed(key):
+            block = text.split(key + ":\n", 1)[1]
+            out = []
+            for line in block.splitlines():
+                if not line.strip().startswith("- "):
+                    break
+                out.append(line.strip()[2:].strip())
+            return out
+
+        self.assertEqual(sorted(listed("provides_tools")), sorted(n for n, _ in registered))
+        self.assertEqual(sorted(listed("provides_toolsets")), sorted({t for _, t in registered}))
 
 
 class BridgeEnvTest(unittest.TestCase):

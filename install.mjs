@@ -18,6 +18,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { dataDir, logDir, resolveHermesHome } from "./paths.js";
 import { restartService, serviceInstalled, stopService } from "./service.js";
+import { enablePlatformToolsets, readProvidedToolsets } from "./hermesConfig.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
@@ -326,6 +327,35 @@ function installHermesPlugin() {
   } catch (e) {
     log(`⚠ Could not auto-enable the plugin: ${e.message}`);
     log(`  Manually add "zalo-platform" under plugins.enabled in ${cfgPath}`);
+  }
+  enablePluginToolsets(cfgPath, path.join(src, "plugin.yaml"));
+}
+
+// Turn on every toolset the plugin provides (plugin.yaml provides_toolsets)
+// for the zalo platform. Hermes enables plugin toolsets by default, but once a
+// platform has a saved toolset list (`hermes tools`) only the listed ones run.
+function enablePluginToolsets(cfgPath, pluginYamlPath) {
+  let toolsets = [];
+  try {
+    toolsets = readProvidedToolsets(fs.readFileSync(pluginYamlPath, "utf-8"));
+  } catch {
+    return;
+  }
+  if (!toolsets.length) return;
+  try {
+    const before = fs.existsSync(cfgPath) ? fs.readFileSync(cfgPath, "utf-8") : "";
+    const r = enablePlatformToolsets(before, "zalo", toolsets);
+    if (r.status === "added") {
+      fs.writeFileSync(cfgPath, r.text);
+      log(`✓ Enabled toolset(s) for Zalo in config.yaml: ${r.added.join(", ")}`);
+    } else if (r.status === "already") {
+      log(`✓ Toolset(s) already enabled for Zalo: ${toolsets.join(", ")}`);
+    } else {
+      log(`✓ Toolset(s) ${toolsets.join(", ")} on by default (no saved Zalo toolset list)`);
+    }
+  } catch (e) {
+    log(`⚠ Could not enable the plugin toolsets: ${e.message}`);
+    log(`  Add ${toolsets.join(", ")} under platform_toolsets.zalo in ${cfgPath}`);
   }
 }
 

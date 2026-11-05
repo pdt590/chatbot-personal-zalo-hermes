@@ -110,6 +110,13 @@ wizard say `hermes-zalo-plugin <command>`; in a source install that is
   replies to one of its messages, or when a message starts with its display name
   (`ZALO_GROUP_MODE=mention`). If you picked no group in the wizard, the bot stays
   out of all groups.
+- **Group stats and summaries:** the plugin adds the `zalo_groups` toolset with
+  two agent tools: `zalo_group_stats` (every group with member count and recent
+  activity) and `zalo_group_messages` (a group's recent messages, including ones
+  that did not address the bot, for summaries). Enable it for Zalo by adding
+  `zalo_groups` under `platform_toolsets.zalo` in the profile's `config.yaml`.
+  The bridge keeps its own log of group messages (`ZALO_GROUP_LOG_DAYS`), so only
+  messages received while it was running are available.
 - **Finding IDs:** set `ZALO_LOG_IDS=true`, send a message, then read the
   `uid=… threadId=…` line in the gateway log.
 - **Changing settings:** re-run `hermes gateway setup`. It searches your contacts
@@ -178,6 +185,7 @@ variables take precedence. Run `node bin/cli.mjs restart` after editing it.
 | `ZALO_ALLOW_DESTRUCTIVE`                              | `false`                | Must be `true` before any `destructive` action runs, even with `all`                                                         |
 | `ZALO_ALLOWED_ACTIONS` / `ZALO_DENIED_ACTIONS`      | —                       | Method names to always allow or always block. The deny list wins over everything.                                                  |
 | `ZALO_CLIMSG_RETENTION_DAYS`                          | `30`                   | Days of undo cache to keep on disk. `0` keeps it in memory only.                                                                 |
+| `ZALO_GROUP_LOG_DAYS`                                 | `3`                    | Days of group messages the bridge keeps for group stats and summaries. `0` keeps the last day in memory only. |
 | `ZALO_INFO_CACHE_TTL` / `ZALO_INFO_MIN_INTERVAL_MS` | `600` s / `1500` ms  | Cache and throttle for info lookups, to avoid account locks                                                                        |
 | `ZALO_SELF_LISTEN`                                    | off                      | Also emit your own outgoing messages                                                                                               |
 
@@ -200,6 +208,80 @@ variables take precedence. Run `node bin/cli.mjs restart` after editing it.
   users or programs could reach the port. `credentials.json` and `bridge.env`
   are as sensitive as a password.
 
+### Tool access hook (optional)
+
+The bridge policy limits what the agent can do *on Zalo*. It does not stop a
+Zalo user from asking the agent to run a shell command or read your files.
+[hooks/zalo-tool-access.py](./hooks/zalo-tool-access.py) is a Hermes
+`pre_tool_call` hook that closes that gap for one profile:
+
+| Who is asking                         | Result                                                                    |
+| ------------------------------------- | ------------------------------------------------------------------------- |
+| Not Zalo (CLI, TUI, desktop, cron)    | Allowed, under the normal Hermes policy                                   |
+| Zalo, not an owner                    | Every tool blocked                                                        |
+| Zalo, owner                           | Only read-only tools; reading secret paths (`~/.hermes`, `~/.ssh`, `.env`…) is blocked |
+| Sender cannot be determined, or any error | Blocked (fail closed)                                                 |
+
+The sender comes from the profile's `state.db` (`sessions.source`, `sessions.user_id`),
+looked up by the payload's `session_id`. If the session is not there, the hook falls
+back to `HERMES_SESSION_PLATFORM` and `HERMES_SESSION_USER_ID`.
+
+**1. Copy it into the profile.** `P` is the profile directory (`~/.hermes` for the default
+profile, `~/.hermes/profiles/<name>` for a named one):
+
+```bash
+P=~/.hermes/profiles/<name>
+mkdir -p "$P/agent-hooks" "$P/logs"
+cp "$(npm root -g)/hermes-zalo-plugin/hooks/zalo-tool-access.py" "$P/agent-hooks/"
+chmod 700 "$P/agent-hooks/zalo-tool-access.py"
+```
+
+**2. Register it** in `$P/config.yaml`. Put the settings on the command line.
+Hermes runs the hook without a shell, so you cannot set variables inline
+(`FOO=1 script`):
+
+```yaml
+hooks:
+  pre_tool_call:
+    - command: "/home/<you>/.hermes/profiles/<name>/agent-hooks/zalo-tool-access.py --owner 5502067660612252304"
+      timeout: 10
+      fail_closed: true
+```
+
+Settings. A command-line argument wins over the env var, and the env var wins over the default:
+
+| Argument | Env var | Default | Meaning |
+| --- | --- | --- | --- |
+| `--owner ID[,ID]` | `ZALO_HOOK_OWNERS` | none | Zalo uids treated as owner. With none, every Zalo user is blocked. Use the uid from `allow_admin_from` / `ZALO_ALLOWED_USERS`; `ZALO_LOG_IDS=true` logs it. |
+| `--profile-home PATH` | `ZALO_HOOK_PROFILE_HOME` | parent of the script's folder | Profile whose `state.db` is read. Set it if the script is not in `<profile>/agent-hooks/`. |
+| `--owner-tools a,b` | `ZALO_HOOK_OWNER_TOOLS` | `read_file, search_files, vision_analyze, todo_list, tool_search, tool_describe, clarify, zalo_group_stats, zalo_group_messages` | Replaces the list of tools an owner may use on Zalo |
+| `--extra-tools a,b` | `ZALO_HOOK_EXTRA_TOOLS` | — | Adds tools to that list, e.g. `web_search` |
+| `--secret-paths p,q` | `ZALO_HOOK_SECRET_PATHS` | — | More directories an owner may not read, relative to `~` or absolute |
+| `--log PATH` | `ZALO_HOOK_LOG` | `<profile>/logs/zalo-tool-access.log` | One `ALLOW` / `BLOCK` line per tool call |
+
+`--owner`, `--extra-tools` and `--secret-paths` can be repeated. Env vars work only if the
+Hermes gateway process has them. Arguments in `config.yaml` are the reliable place.
+
+**3. Approve it.** Hermes skips a hook that is not in `$P/shell-hooks-allowlist.json` and logs
+`not allowlisted — skipped`. Approve it once: run `hermes` for that profile and answer the
+prompt, or start it once with `--accept-hooks` (or `HERMES_ACCEPT_HOOKS=1`). The approval is
+tied to the exact `command` string, so changing the arguments needs a new approval.
+
+**4. Restart and check:**
+
+```bash
+systemctl --user restart hermes-gateway.service
+H="$P/agent-hooks/zalo-tool-access.py --owner <owner-uid>"
+echo '{"tool_name":"terminal"}' | HERMES_SESSION_PLATFORM=zalo HERMES_SESSION_USER_ID=<owner-uid> $H  # block: not read-only
+echo '{"tool_name":"terminal"}' | HERMES_SESSION_PLATFORM=zalo HERMES_SESSION_USER_ID=123 $H          # block: not owner
+echo '{"tool_name":"terminal"}' | HERMES_SESSION_PLATFORM=cli $H                                     # no output: allowed
+tail "$P/logs/zalo-tool-access.log"
+```
+
+When the plugin gains a new read-only tool, add it with `--extra-tools`. Until you do, owners are
+blocked from it too. The script can be edited without approving it again, so keep it writable
+only by you.
+
 ## HTTP API (bridge)
 
 With a token set, send it as the `x-bridge-token` header, `Authorization: Bearer <token>`, or `?token=` (handy for opening `/qr.png` in a browser).
@@ -212,6 +294,7 @@ With a token set, send it as the `x-bridge-token` header, `Authorization: Bearer
 | `POST /send-attachment` · `/send-voice` · `/send-sticker` · `/send-card`                   | Media. Local paths only; files in the data directory are refused.                                                                             |
 | `POST /react` · `/undo` · `/typing`                                                           | Reactions, recalling a message, typing indicator                                                                                              |
 | `GET /contacts` · `/friends` · `/groups` · `/chat-info` · `/stickers` · `/find-user` | Lookups                                                                                                                                       |
+| `GET /group-stats?hours=` · `/group-messages?groupId=&hours=&limit=`                                 | Group activity and logged group messages                                                                                                      |
 | `POST /group/*` · `/friend/*` · `/poll/create`                                                | Group, friend and poll management                                                                                                             |
 | `POST /api/<method>`                                                                                | `{ args: [...] }` calls any zca-js method, subject to the policy                                                                            |
 | `GET /qr` · `/qr.png` · `POST /relogin` · `GET /policy` · `POST /shutdown`              | Session and admin                                                                                                                             |

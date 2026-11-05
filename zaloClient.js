@@ -101,8 +101,11 @@ export class ZaloClient extends EventEmitter {
    * @param {string} opts.qrPath           Where to write the QR PNG during login.
    * @param {boolean} opts.selfListen      Whether to receive our own messages.
    */
-  constructor({ credentialsPath, qrPath, selfListen = false, cliMsgDir = null, cliMsgRetentionDays = 30, infoCacheTtlMs = 600000, infoMinIntervalMs = 1500 }) {
+  constructor({ credentialsPath, qrPath, selfListen = false, cliMsgDir = null, cliMsgRetentionDays = 30, infoCacheTtlMs = 600000, infoMinIntervalMs = 1500, groupLog = null }) {
     super();
+    // Optional GroupLog: records every group message (ours included) for
+    // group stats/summaries. See groupLog.js.
+    this.groupLog = groupLog;
     this.credentialsPath = credentialsPath;
     this.qrPath = qrPath;
     this.selfListen = selfListen;
@@ -759,8 +762,9 @@ export class ZaloClient extends EventEmitter {
             `from=${d.uidFrom} self=${message.isSelf} msgType=${d.msgType} ` +
             `content=${typeof d.content === "string" ? JSON.stringify(d.content).slice(0, 80) : JSON.stringify(d.content).slice(0, 400)}`,
         );
-        const ev = this._normaliseMessage(message);
-        if (ev) this.emit("message", ev);
+        const ev = this._normaliseMessage(message, { includeSelf: true });
+        if (ev && this.groupLog) this.groupLog.record(ev);
+        if (ev && (!ev.isSelf || this.selfListen)) this.emit("message", ev);
       } catch (e) {
         console.error("[zalo] failed to normalise message:", e.message);
       }
@@ -827,11 +831,11 @@ export class ZaloClient extends EventEmitter {
    * Convert a zca-js Message into a flat inbound event for Hermes.
    * Skips our own messages unless selfListen is on.
    */
-  _normaliseMessage(message) {
+  _normaliseMessage(message, { includeSelf = false } = {}) {
     const isGroup = message.type === ThreadType.Group;
     const data = message.data || {};
 
-    if (message.isSelf && !this.selfListen) return null;
+    if (message.isSelf && !this.selfListen && !includeSelf) return null;
 
     const msgType = data.msgType || "";
     let text = "";
@@ -1193,7 +1197,11 @@ export class ZaloClient extends EventEmitter {
         }
         for (const id of slice) {
           const g = map[id] || {};
-          groups.push({ id: String(id), name: g.name || g.groupName || `(group ${id})` });
+          groups.push({
+            id: String(id),
+            name: g.name || g.groupName || `(group ${id})`,
+            members: Number.isFinite(g.totalMember) ? g.totalMember : null,
+          });
         }
       }
     } catch (e) {
@@ -1272,6 +1280,7 @@ export class ZaloClient extends EventEmitter {
         this._cliMsgStream.end();
         this._cliMsgStream = null;
       }
+      if (this.groupLog) this.groupLog.close();
     } catch {
       /* ignore */
     }

@@ -1,18 +1,22 @@
 {
+  "3": ".test_provides_match_register",
   "4": "server.js",
   "7": "markdownToZalo.js",
-  "8": "TargetTest",
+  "8": "GroupLog",
   "9": "paths.js",
+  "11": "paths.js",
   "17": "QuotedReplyTest",
   "18": "test_adapter.py",
   "19": "PROPOSAL — Rà soát, sửa lỗi và refactor hermes-zalo-plugin (v1.0.12)",
   "20": "CLAUDE.md",
   "21": "uninstall.sh script",
   "22": "uninstall.ps1",
-  "23": "Cfg",
+  "23": "TargetTest",
   "24": "ThreadTypeTest",
-  "25": "ReplyFieldsTest",
-  "26": "StripLeadingNameTest",
-  "27": "SendImageTest",
-  "28": "EmptyImageTagTest"
+  "25": "ToolAccessHookTest",
+  "26": "Cfg",
+  "27": "zalo-tool-access.py",
+  "28": "postinstall.mjs",
+  "29": "EmptyImageTagTest",
+  "30": "GroupToolsTest"
 }

@@ -52,6 +52,10 @@ export function cliMsgDir() {
   return process.env.ZALO_CLIMSG_DIR || path.join(dataDir(), "climsgids");
 }
 
+export function groupLogDir() {
+  return process.env.ZALO_GROUP_LOG_DIR || path.join(dataDir(), "group-messages");
+}
+
 export function logDir() {
   return process.env.ZALO_LOG_DIR || dataDir();
 }

@@ -220,6 +220,7 @@ _BRIDGE_ENV_KEYS = (
     "ZALO_CLIMSG_RETENTION_DAYS",
     "ZALO_INFO_CACHE_TTL",
     "ZALO_INFO_MIN_INTERVAL_MS",
+    "ZALO_GROUP_LOG_DAYS",
 )
 
 from gateway.platforms.base import (
@@ -1556,6 +1557,18 @@ def interactive_setup() -> None:
         except ValueError:
             print_warning("Invalid number — keeping default 30 days")
 
+    group_log_days = prompt(
+        "Group message log retention in days — the bridge logs group messages for "
+        "group stats and summaries, and deletes them after this many days "
+        "(default 3, 0 = keep only the last day in memory, nothing on disk)",
+        default=get_env_value("ZALO_GROUP_LOG_DAYS") or "3",
+    )
+    if group_log_days is not None and str(group_log_days).strip() != "":
+        try:
+            save_env_value("ZALO_GROUP_LOG_DAYS", str(max(0, int(group_log_days))))
+        except ValueError:
+            print_warning("Invalid number — keeping default 3 days")
+
     print()
     print_info("🔐 Access control — bot được phép làm những NHÓM hành động nào?")
     print_info("   Mức độ nguy hiểm tăng dần: read < send < interact < manage < destructive")
@@ -1730,6 +1743,153 @@ async def _standalone_send(pconfig, chat_id, message, *, thread_id=None, media_f
         await adapter._close_session()
 
 
+# ---------------------------------------------------------------------------
+# Agent tools: group stats and group message history (toolset "zalo_groups")
+# ---------------------------------------------------------------------------
+
+def _bridge_get(path: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Synchronous GET to the bridge for tool handlers."""
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+    base = (os.getenv("ZALO_PLUGIN_URL") or "http://127.0.0.1:8787").rstrip("/")
+    url = f"{base}{path}" + (f"?{urllib.parse.urlencode(params)}" if params else "")
+    req = urllib.request.Request(url)
+    token = os.getenv("ZALO_PLUGIN_TOKEN")
+    if token:
+        req.add_header("x-bridge-token", token)
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            return json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        try:
+            return json.loads(e.read().decode("utf-8"))
+        except Exception:
+            return {"error": f"HTTP {e.code}"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def _current_zalo_group() -> Optional[str]:
+    """The group this conversation is in, when the agent runs from a Zalo group."""
+    try:
+        from gateway.session_context import get_session_env
+    except Exception:
+        get_session_env = lambda name, default="": os.getenv(name, default)  # noqa: E731
+    if get_session_env("HERMES_SESSION_PLATFORM", "") != "zalo":
+        return None
+    if get_session_env("HERMES_SESSION_CHAT_TYPE", "") != "group":
+        return None
+    return get_session_env("HERMES_SESSION_CHAT_ID", "") or None
+
+
+def _find_groups(ref: str) -> List[Dict[str, Any]]:
+    """Groups whose id equals ``ref`` or whose name contains it (accent-insensitive)."""
+    data = _bridge_get("/contacts")
+    groups = data.get("groups") or []
+    gid, _ = _split_target(ref)
+    exact = [g for g in groups if str(g.get("id")) == gid]
+    if exact:
+        return exact
+    q = _norm_text(ref)
+    named = [g for g in groups if _norm_text(g.get("name", "")) == q]
+    return named or [g for g in groups if q and q in _norm_text(g.get("name", ""))]
+
+
+def _fmt_time(ms) -> str:
+    try:
+        return datetime.fromtimestamp(int(ms) / 1000).strftime("%d/%m %H:%M")
+    except Exception:
+        return "?"
+
+
+def _tool_group_stats(args: Dict[str, Any], **_kw) -> str:
+    hours = args.get("hours") or 24
+    data = _bridge_get("/group-stats", {"hours": hours})
+    if data.get("error"):
+        return json.dumps({"success": False, "error": data["error"]}, ensure_ascii=False)
+    groups = sorted(data.get("groups") or [], key=lambda g: g.get("messages", 0), reverse=True)
+    rows = [{
+        "name": g.get("name"),
+        "id": g.get("id"),
+        "members": g.get("members"),
+        f"messages_last_{hours}h": g.get("messages", 0),
+        "active_senders": g.get("senders", 0),
+        "top_senders": [f"{s.get('name') or s.get('id')} ({s.get('count')})" for s in g.get("topSenders") or []],
+        "last_message": _fmt_time(g["lastMessageAt"]) if g.get("lastMessageAt") else None,
+    } for g in groups]
+    return json.dumps({
+        "success": True,
+        "group_count": len(rows),
+        "note": ("Message counts only include messages received while the bridge was running"
+                 + (f" (log starts {_fmt_time(data['loggedSince'])})." if data.get("loggedSince") else ".")),
+        "groups": rows,
+    }, ensure_ascii=False)
+
+
+def _tool_group_messages(args: Dict[str, Any], **_kw) -> str:
+    ref = str(args.get("group") or "").strip()
+    if ref:
+        found = _find_groups(ref)
+        if not found:
+            return json.dumps({"success": False, "error": f"no group matches {ref!r}"}, ensure_ascii=False)
+        if len(found) > 1:
+            return json.dumps({"success": False, "error": "several groups match; pass the id",
+                               "matches": [{"id": g["id"], "name": g.get("name")} for g in found]},
+                              ensure_ascii=False)
+        group_id, group_name = str(found[0]["id"]), found[0].get("name")
+    else:
+        group_id, group_name = _current_zalo_group(), None
+        if not group_id:
+            return json.dumps({"success": False, "error": "not in a Zalo group: pass `group` (name or id)"},
+                              ensure_ascii=False)
+    hours = args.get("hours") or 24
+    limit = args.get("limit") or 300
+    data = _bridge_get("/group-messages", {"groupId": group_id, "hours": hours, "limit": limit})
+    if data.get("error"):
+        return json.dumps({"success": False, "error": data["error"]}, ensure_ascii=False)
+    lines = []
+    for m in data.get("messages") or []:
+        who = (m.get("n") or m.get("u") or "?") + (" (bot)" if m.get("s") else "")
+        lines.append(f"[{_fmt_time(m.get('t'))}] {who}: {m.get('x') or '[' + (m.get('k') or 'media') + ']'}")
+    return json.dumps({
+        "success": True,
+        "group_id": group_id,
+        "group_name": group_name,
+        "hours": hours,
+        "message_count": len(lines),
+        "note": ("Only messages received while the bridge was running are available"
+                 + (f" (log starts {_fmt_time(data['loggedSince'])})." if data.get("loggedSince") else ".")),
+        "messages": "\n".join(lines),
+    }, ensure_ascii=False)
+
+
+def _schema(name: str, description: str, properties: Dict[str, Any]) -> Dict[str, Any]:
+    return {"name": name, "description": description,
+            "parameters": {"type": "object", "properties": properties, "additionalProperties": False}}
+
+
+_HOURS = {"type": "number", "description": "Look-back window in hours (default 24, max 744)."}
+
+_GROUP_TOOLS = (
+    ("zalo_group_stats", _schema(
+        "zalo_group_stats",
+        "Statistics for every Zalo group the bot account is in: name, id, member count, messages "
+        "and active senders in the last N hours, top senders, last message time. Use it to list "
+        "or compare the bot's groups.",
+        {"hours": _HOURS}), _tool_group_stats, "📊"),
+    ("zalo_group_messages", _schema(
+        "zalo_group_messages",
+        "Recent messages of one Zalo group, oldest first, as '[dd/mm HH:MM] Sender: text' lines, "
+        "including messages that did not address the bot. Use it to summarise what a group "
+        "discussed. Omit `group` for the group of the current conversation.",
+        {"group": {"type": "string", "description": "Group name (or part of it) or id. Optional in a group chat."},
+         "hours": _HOURS,
+         "limit": {"type": "integer", "description": "Most recent messages to return (default 300, max 2000)."}}),
+     _tool_group_messages, "💬"),
+)
+
+
 def is_connected() -> bool:
     """Lightweight check used by `hermes gateway status` (env-only)."""
     return bool(os.getenv("ZALO_PLUGIN_URL"))
@@ -1737,6 +1897,9 @@ def is_connected() -> bool:
 
 def register(ctx):
     """Plugin entry point: called by the Hermes plugin system."""
+    for name, schema, handler, emoji in _GROUP_TOOLS:
+        ctx.register_tool(name=name, toolset="zalo_groups", schema=schema, handler=handler,
+                          check_fn=lambda: bool(os.getenv("ZALO_PLUGIN_URL")), emoji=emoji)
     ctx.register_platform(
         name="zalo",
         label="Zalo",
