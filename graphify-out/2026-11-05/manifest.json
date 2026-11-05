@@ -12,9 +12,9 @@
     "semantic_hash": "f249b7ff9f0b9e44092963aa540c2600"
   },
   "hermes-plugin/adapter.py": {
-    "mtime": 1793866570.9428458,
-    "seen": 1793866997.1137657,
-    "ast_hash": "42e5bcdec5dc9fa3179cc932832527c0",
+    "mtime": 1793869045.9260943,
+    "seen": 1793869405.744532,
+    "ast_hash": "ec79ddd402431787d6a616d8aa600dea",
     "semantic_hash": ""
   },
   "hermes-plugin/plugin.yaml": {
@@ -54,9 +54,9 @@
     "semantic_hash": ""
   },
   "package.json": {
-    "mtime": 1793866618.764717,
-    "seen": 1793866997.1137886,
-    "ast_hash": "3d3b78fba01ac6e21935455be221234c",
+    "mtime": 1793867731.6025436,
+    "seen": 1793867747.475581,
+    "ast_hash": "deddcef8da089bf6839f76d3bcd5fe61",
     "semantic_hash": ""
   },
   "paths.js": {
@@ -96,15 +96,15 @@
     "semantic_hash": ""
   },
   "README.md": {
-    "mtime": 1793866119.4568121,
-    "seen": 1793866130.8392537,
-    "ast_hash": "9e613c119555b28cb48f6d1afe6994c5",
+    "mtime": 1793869107.9365294,
+    "seen": 1793869405.7446184,
+    "ast_hash": "2724f465a206661869e9e8bb03b0db09",
     "semantic_hash": ""
   },
   "README.vi.md": {
-    "mtime": 1793866119.4568121,
-    "seen": 1793866130.839256,
-    "ast_hash": "3d62e85aa6919ebb5a93d6504c02cd84",
+    "mtime": 1793869107.9365294,
+    "seen": 1793869405.7446208,
+    "ast_hash": "2cc98d8378752e3e43d0427c424c61f7",
     "semantic_hash": ""
   },
   "assets/logo.svg": {
@@ -150,9 +150,9 @@
     "semantic_hash": ""
   },
   "test/test_adapter.py": {
-    "mtime": 1793866625.74899,
-    "seen": 1793866997.1138234,
-    "ast_hash": "f553eda986dd63ce27f9ec9eaef0098f",
+    "mtime": 1793869063.1907742,
+    "seen": 1793869405.744596,
+    "ast_hash": "754ce730ffdc57fe8064a5ce99a0f4f2",
     "semantic_hash": ""
   },
   "CLAUDE.md": {
@@ -219,6 +219,18 @@
     "mtime": 1793866603.828133,
     "seen": 1793866997.1138074,
     "ast_hash": "d128f305af438bac8db2b1e73406bb6c",
+    "semantic_hash": ""
+  },
+  "hooks/zalo-tool-access.py": {
+    "mtime": 1793869090.7678568,
+    "seen": 1793869405.7445414,
+    "ast_hash": "fbd024ea5a4175dbc36fed206fa5b9b3",
+    "semantic_hash": ""
+  },
+  "test/test_tool_access_hook.py": {
+    "mtime": 1793869090.771857,
+    "seen": 1793869405.7445989,
+    "ast_hash": "72dca99475a08bbcf8e46707bbd1cd50",
     "semantic_hash": ""
   },
   "package-lock.json": {

@@ -221,6 +221,100 @@ class QuotedReplyTest(unittest.TestCase):
         self.assertNotIn("quote", self.posts[0])
 
 
+class HeldMediaTest(unittest.TestCase):
+    """A caption-less file/image waits for the sender's next text message."""
+
+    FILE = {"kind": "file", "url": "http://f/test.txt", "fileName": "test.txt", "mime": "application/octet-stream"}
+    IMAGE = {"kind": "image", "url": "http://f/a.jpg", "mime": "image/jpeg"}
+
+    def setUp(self):
+        self._event, self._type = adapter.MessageEvent, adapter.MessageType
+
+        class Ev:
+            def __init__(self, **kw):
+                self.__dict__.update(kw)
+
+        adapter.MessageEvent = Ev
+        adapter.MessageType = types.SimpleNamespace(TEXT="text", DOCUMENT="document", PHOTO="photo")
+        self.a = adapter.ZaloAdapter(Cfg())
+        self.a.media_wait = 300
+        self.a._message_handler = object()
+        self.events, self.downloads = [], []
+        self.a.build_source = lambda **kw: kw
+
+        async def handle(ev):
+            self.events.append(ev)
+
+        async def download(media):
+            self.downloads.append(media["url"])
+            kind = adapter.MessageType.PHOTO if media["kind"] == "image" else adapter.MessageType.DOCUMENT
+            return "/cache/" + media["url"].rsplit("/", 1)[-1], kind
+
+        self.a.handle_message = handle
+        self.a._download_media = download
+
+    def tearDown(self):
+        adapter.MessageEvent, adapter.MessageType = self._event, self._type
+
+    def msg(self, text, media=None, sender="u1", thread="u1", ttype="user"):
+        m = {"threadId": thread, "threadType": ttype, "senderId": sender, "text": text, "messageId": "1"}
+        if media:
+            m["media"] = media
+        asyncio.run(self.a._on_inbound_message(m))
+
+    def test_file_alone_starts_no_turn_and_joins_next_text(self):
+        self.msg("[file: test.txt]", self.FILE)
+        self.assertEqual(self.events, [])
+        self.assertEqual(self.downloads, [])
+        self.msg("Thử đọc file trên")
+        ev = self.events[0]
+        self.assertEqual(ev.text, "Thử đọc file trên")
+        self.assertEqual(ev.media_urls, ["/cache/test.txt"])
+        self.assertEqual(ev.message_type, "document")
+        self.msg("tin tiếp theo")
+        self.assertEqual(self.events[1].media_urls, [])
+
+    def test_captioned_image_is_not_held(self):
+        self.msg("ảnh này là gì?", self.IMAGE)
+        self.assertEqual(self.events[0].media_urls, ["/cache/a.jpg"])
+
+    def test_held_media_is_per_sender_and_expires(self):
+        self.msg("", self.IMAGE, sender="u2", thread="g1", ttype="group")
+        self.msg("hello", sender="u1", thread="u1")
+        self.assertEqual(self.events[0].media_urls, [])
+        key = ("g1", "u2")
+        self.a._held_media[key] = [(adapter.time.monotonic() - 301, self.IMAGE)]
+        self.assertEqual(self.a._take_held_media("g1", "u2"), [])
+
+    def test_owner_session_gets_owner_topic(self):
+        self.a._owner_ids = {"u1"}
+        self.msg("hi", sender="u1")
+        self.msg("hi", sender="u2", thread="u2")
+        self.assertEqual(self.events[0].source["chat_topic"], adapter.ZaloAdapter._OWNER_TOPIC)
+        self.assertIsNone(self.events[1].source["chat_topic"])
+
+    def test_owner_ids_fall_back_to_hook_owners(self):
+        old = {k: os.environ.pop(k, None) for k in ("ZALO_OWNER_IDS", "ZALO_HOOK_OWNERS")}
+        try:
+            os.environ["ZALO_HOOK_OWNERS"] = "7, 8"
+            self.assertEqual(adapter.ZaloAdapter(Cfg())._owner_ids, {"7", "8"})
+            os.environ["ZALO_OWNER_IDS"] = "9"
+            self.assertEqual(adapter.ZaloAdapter(Cfg())._owner_ids, {"9"})
+            os.environ.pop("ZALO_OWNER_IDS"); os.environ.pop("ZALO_HOOK_OWNERS")
+            admin_cfg = type("C", (), {"extra": {"allow_admin_from": ["550", 551]}})()
+            self.assertEqual(adapter.ZaloAdapter(admin_cfg)._owner_ids, {"550", "551"})
+        finally:
+            for k, v in old.items():
+                os.environ.pop(k, None)
+                if v is not None:
+                    os.environ[k] = v
+
+    def test_wait_zero_replies_to_attachment_alone(self):
+        self.a.media_wait = 0
+        self.msg("[file: test.txt]", self.FILE)
+        self.assertEqual(self.events[0].media_urls, ["/cache/test.txt"])
+
+
 class TargetTest(unittest.TestCase):
     """Cron --deliver zalo:group:<id> must reach Zalo as the bare id."""
 

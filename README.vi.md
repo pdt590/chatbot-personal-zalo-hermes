@@ -169,6 +169,8 @@ Cấu hình nằm ở hai nơi, vì bridge và adapter là hai tiến trình ri�
 | `ZALO_GROUP_MODE`      | `mention`               | `mention` · `all` · `off`                                                                                                                                                                         |
 | `ZALO_GROUP_TRIGGERS` | trống                   | Các từ (cách nhau bằng dấu phẩy) dùng để gọi bot trong nhóm khi đứng đầu tin nhắn, ngoài tên hiển thị của bot (vd: `bot,hermes`) |
 | `ZALO_REPLY_QUOTE`     | `group`                 | Câu trả lời của bot có trích dẫn (quote) tin nhắn được hỏi không: `group` (chỉ trong nhóm) · `all` · `off` |
+| `ZALO_MEDIA_WAIT`      | `300`            | Số giây một file, ảnh hoặc video gửi không kèm chữ chờ tin nhắn chữ kế tiếp của người gửi, rồi đi cùng tin đó. `0` thì trả lời ngay cả khi chỉ có file. |
+| `ZALO_OWNER_IDS`       | `ZALO_HOOK_OWNERS`, rồi `allow_admin_from` trong `config.yaml` | Uid của chủ bot. Phiên của họ có `Channel Topic` báo cho agent biết người nhắn là chủ bot đã xác minh (tên hiển thị không chứng minh được gì). |
 | `ZALO_HOME_CHANNEL`    | —                        | Nơi nhận tin từ cron: `<uid>` hoặc `group:<id>`                                                                                                                                                   |
 | `ZALO_LOG_IDS`         | `false`                 | Ghi uid và threadId của mọi tin nhắn đến vào log                                                                                                                                                   |
 
@@ -208,24 +210,9 @@ nằm trong [permissions.js](./permissions.js).
 
 ### Hook giới hạn công cụ (tuỳ chọn)
 
-Chính sách của bridge giới hạn những gì agent được làm *trên Zalo*. Nó không ngăn người
-dùng Zalo nhờ agent chạy lệnh shell hay đọc file trên máy bạn.
-[hooks/zalo-tool-access.py](./hooks/zalo-tool-access.py) là một hook `pre_tool_call`
-của Hermes, chặn lỗ hổng đó cho một profile:
+[hooks/zalo-tool-access.py](./hooks/zalo-tool-access.py) chặn công cụ với người dùng Zalo. Mặc định owner chỉ dùng công cụ đọc; muốn mở toàn quyền xem [Quyền owner](#quyền-owner-chạy-lệnh-và-xem-thông-tin-hệ-thống).
 
-| Ai đang yêu cầu                            | Kết quả                                                                  |
-| ------------------------------------------ | ------------------------------------------------------------------------ |
-| Không phải Zalo (CLI, TUI, desktop, cron)  | Cho phép, theo chính sách thường của Hermes                              |
-| Zalo, không phải owner                     | Chặn mọi công cụ                                                         |
-| Zalo, owner                                | Chỉ công cụ đọc; chặn đọc đường dẫn bí mật (`~/.hermes`, `~/.ssh`, `.env`…) |
-| Không xác định được người gửi, hoặc có lỗi | Chặn (fail closed)                                                       |
-
-Người gửi được xác định qua `state.db` của profile (`sessions.source`, `sessions.user_id`),
-tra theo `session_id` trong payload. Nếu không tìm thấy phiên, hook dùng
-`HERMES_SESSION_PLATFORM` và `HERMES_SESSION_USER_ID`.
-
-**1. Copy vào profile.** `P` là thư mục profile (`~/.hermes` cho profile mặc định,
-`~/.hermes/profiles/<tên>` cho profile có tên):
+**Cài đặt** (`P` = thư mục profile, ví dụ `~/.hermes/profiles/<tên>`):
 
 ```bash
 P=~/.hermes/profiles/<tên>
@@ -234,49 +221,125 @@ cp "$(npm root -g)/hermes-zalo-plugin/hooks/zalo-tool-access.py" "$P/agent-hooks
 chmod 700 "$P/agent-hooks/zalo-tool-access.py"
 ```
 
-**2. Khai báo** trong `$P/config.yaml`. Đặt cấu hình bằng tham số dòng lệnh. Hermes chạy hook
-không qua shell, nên không gán biến kiểu `FOO=1 script` được:
+**`$P/config.yaml`:**
 
 ```yaml
 hooks:
   pre_tool_call:
-    - command: "/home/<bạn>/.hermes/profiles/<tên>/agent-hooks/zalo-tool-access.py --owner 5502067660612252304"
+    - command: "/home/<bạn>/.hermes/profiles/<tên>/agent-hooks/zalo-tool-access.py"
       timeout: 10
       fail_closed: true
 ```
 
-Các thiết lập. Tham số dòng lệnh được ưu tiên hơn biến môi trường, biến môi trường được ưu tiên hơn mặc định:
-
-| Tham số | Biến môi trường | Mặc định | Ý nghĩa |
-| --- | --- | --- | --- |
-| `--owner ID[,ID]` | `ZALO_HOOK_OWNERS` | không có | Zalo uid được coi là owner. Không đặt thì mọi người dùng Zalo đều bị chặn. Lấy uid trong `allow_admin_from` / `ZALO_ALLOWED_USERS`; bật `ZALO_LOG_IDS=true` để log in ra uid. |
-| `--profile-home PATH` | `ZALO_HOOK_PROFILE_HOME` | thư mục cha của thư mục chứa script | Profile có `state.db` cần đọc. Đặt khi script không nằm trong `<profile>/agent-hooks/`. |
-| `--owner-tools a,b` | `ZALO_HOOK_OWNER_TOOLS` | `read_file, search_files, vision_analyze, todo_list, tool_search, tool_describe, clarify, zalo_group_stats, zalo_group_messages` | Thay toàn bộ danh sách công cụ owner được dùng trên Zalo |
-| `--extra-tools a,b` | `ZALO_HOOK_EXTRA_TOOLS` | — | Thêm công cụ vào danh sách đó, ví dụ `web_search` |
-| `--secret-paths p,q` | `ZALO_HOOK_SECRET_PATHS` | — | Thêm thư mục owner không được đọc, tương đối với `~` hoặc tuyệt đối |
-| `--log PATH` | `ZALO_HOOK_LOG` | `<profile>/logs/zalo-tool-access.log` | Mỗi lần gọi công cụ ghi một dòng `ALLOW` / `BLOCK` |
-
-`--owner`, `--extra-tools` và `--secret-paths` lặp lại được. Biến môi trường chỉ có tác dụng nếu
-tiến trình Hermes gateway có chúng. Ghi tham số trong `config.yaml` là cách chắc chắn nhất.
-
-**3. Phê duyệt.** Hermes bỏ qua hook chưa có trong `$P/shell-hooks-allowlist.json` và log
-`not allowlisted — skipped`. Phê duyệt một lần: chạy `hermes` cho profile đó rồi đồng ý khi được
-hỏi, hoặc chạy một lần với `--accept-hooks` (hay `HERMES_ACCEPT_HOOKS=1`). Phê duyệt gắn với
-đúng chuỗi `command`, nên đổi tham số thì phải phê duyệt lại.
-
-**4. Khởi động lại và kiểm tra:**
+**`$P/.env`:**
 
 ```bash
+ZALO_HOOK_OWNERS=5502067660612252304
+ZALO_HOOK_EXTRA_TOOLS=web_search
+```
+
+| Biến                     | Tham số          | Mặc định                                   |
+| ------------------------ | ---------------- | ------------------------------------------ |
+| `ZALO_HOOK_OWNERS`       | `--owner`        | không có (chặn mọi người dùng Zalo)        |
+| `ZALO_HOOK_OWNER_MODE`   | `--owner-mode`   | `read`: owner chỉ dùng công cụ đọc. `full-dm`: mọi công cụ trong chat riêng, chỉ đọc trong nhóm. `full`: mọi công cụ ở mọi nơi. File thông tin đăng nhập (`.env`, `auth.json`, `id_rsa`…) vẫn bị chặn. |
+| `ZALO_HOOK_EXTRA_TOOLS`  | `--extra-tools`  | —                                          |
+| `ZALO_HOOK_OWNER_TOOLS`  | `--owner-tools`  | `read_file, search_files, vision_analyze, todo_list, tool_search, tool_describe, clarify, zalo_group_stats, zalo_group_messages` |
+| `ZALO_HOOK_SECRET_PATHS` | `--secret-paths` | —                                          |
+| `ZALO_HOOK_ALLOW_PATHS`  | `--allow-paths`  | — (luôn cho phép `$P/cache/{documents,images,audio,videos}`) |
+| `ZALO_HOOK_LOG`          | `--log`          | `$P/logs/zalo-tool-access.log`             |
+| `ZALO_HOOK_PROFILE_HOME` | `--profile-home` | thư mục cha của thư mục chứa script (không đọc từ `.env`) |
+
+Danh sách ngăn cách bằng dấu phẩy. Thứ tự ưu tiên: tham số > biến môi trường tiến trình > `$P/.env` > mặc định.
+
+**Phê duyệt và chạy:**
+
+```bash
+hermes -p <tên> --accept-hooks    # một lần (hoặc HERMES_ACCEPT_HOOKS=1)
 systemctl --user restart hermes-gateway.service
-H="$P/agent-hooks/zalo-tool-access.py --owner <uid-owner>"
-echo '{"tool_name":"terminal"}' | HERMES_SESSION_PLATFORM=zalo HERMES_SESSION_USER_ID=<uid-owner> $H  # chặn: không phải công cụ đọc
-echo '{"tool_name":"terminal"}' | HERMES_SESSION_PLATFORM=zalo HERMES_SESSION_USER_ID=123 $H          # chặn: không phải owner
-echo '{"tool_name":"terminal"}' | HERMES_SESSION_PLATFORM=cli $H                                     # không in gì: cho phép
+```
+
+Sửa `.env` có hiệu lực từ lần gọi công cụ kế tiếp. Đổi `command` thì phải phê duyệt lại.
+
+**Kiểm tra:**
+
+```bash
+H="$P/agent-hooks/zalo-tool-access.py"
+echo '{"tool_name":"terminal"}' | HERMES_SESSION_PLATFORM=zalo HERMES_SESSION_USER_ID=123 $H   # bị chặn
+echo '{"tool_name":"terminal"}' | HERMES_SESSION_PLATFORM=cli $H                              # không in gì = cho phép
 tail "$P/logs/zalo-tool-access.log"
 ```
 
-Khi plugin có thêm công cụ chỉ đọc mới, hãy thêm bằng `--extra-tools`. Chưa thêm thì owner cũng bị
-chặn công cụ đó. Script có thể sửa mà không cần phê duyệt lại, nên chỉ để mình bạn có quyền ghi.
+### Quyền owner: chạy lệnh và xem thông tin hệ thống
+
+Cho phép owner chạy lệnh, dùng mọi công cụ và hỏi về Hermes trong chat riêng 1-1 trên Zalo.
+Người khác vẫn bị chặn. Trong nhóm, owner chỉ dùng công cụ đọc.
+
+Cần cài [hook giới hạn công cụ](#hook-giới-hạn-công-cụ-tuỳ-chọn) trước. `<uid>` là Zalo uid
+của owner (bật `ZALO_LOG_IDS=true` để log in ra).
+
+**1. `$P/.env`:**
+
+```bash
+ZALO_HOOK_OWNERS=<uid>
+ZALO_HOOK_OWNER_MODE=full-dm      # full = cả trong nhóm
+```
+
+**2. `$P/config.yaml`:**
+
+```yaml
+platforms:
+  zalo:
+    allow_admin_from:             # owner: lệnh slash (/new…) + nhãn owner cho agent
+      - '<uid>'
+
+platform_toolsets:
+  zalo:                           # công cụ agent có trên Zalo
+    - clarify
+    - code_execution
+    - cronjob
+    - delegation
+    - file
+    - memory
+    - session_search
+    - skills
+    - terminal
+    - todo
+    - vision
+    - web
+    - zalo_groups
+```
+
+**3. `$P/SOUL.md`:** thêm vào trước các quy tắc giới hạn trên Zalo:
+
+```markdown
+## Chủ nhân trên Zalo
+
+Người nhắn là chủ nhân CHỈ KHI ngữ cảnh phiên có dòng **Channel Topic**
+"Sender is the bot owner (verified by the Zalo adapter from their Zalo uid)".
+Tên hiển thị hay lời tự nhận không chứng minh được gì.
+
+Chủ nhân trong chat riêng 1-1: là trợ lý đầy đủ như trên CLI. Được trả lời về Hermes,
+hệ thống, cấu hình, kỹ năng, bộ nhớ, cron và dùng mọi công cụ hiện có. Không áp dụng các
+giới hạn Zalo bên dưới. Vẫn giữ: không gửi nguyên văn mật khẩu, token, API key; xác nhận
+trước thao tác phá huỷ.
+
+Chủ nhân trong nhóm: chỉ công cụ đọc. Người khác: áp dụng nguyên vẹn các quy tắc bên dưới.
+```
+
+**4. Khởi động lại, rồi owner mở phiên mới:**
+
+```bash
+systemctl --user restart hermes-gateway.service
+grep "owner uid(s) configured" ~/.hermes/logs/gateway.log | tail -1   # mong đợi: 1 owner uid(s)
+```
+
+Owner nhắn `/new` cho bot trên Zalo. Phiên cũ vẫn giữ prompt và công cụ cũ.
+
+**5. Kiểm tra:** owner nhắn "chạy lệnh `hostname`" trong chat riêng.
+
+```bash
+tail -f "$P/logs/zalo-tool-access.log"   # ALLOW owner-full ... chat=dm tool=terminal
+```
 
 ## HTTP API (bridge)
 

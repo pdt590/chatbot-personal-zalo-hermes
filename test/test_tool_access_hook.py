@@ -23,9 +23,10 @@ class ToolAccessHookTest(unittest.TestCase):
         self.home = Path(self.tmp.name)
         (self.home / "logs").mkdir()
         con = sqlite3.connect(self.home / "state.db")
-        con.execute("create table sessions (id text primary key, source text, user_id text)")
-        con.executemany("insert into sessions values (?,?,?)", [
-            ("s-owner", "zalo", OWNER), ("s-stranger", "zalo", STRANGER), ("s-cli", "cli", "uid:1000")])
+        con.execute("create table sessions (id text primary key, source text, user_id text, chat_type text)")
+        con.executemany("insert into sessions values (?,?,?,?)", [
+            ("s-owner", "zalo", OWNER, "dm"), ("s-owner-group", "zalo", OWNER, "group"),
+            ("s-stranger", "zalo", STRANGER, "dm"), ("s-cli", "cli", "uid:1000", None)])
         con.commit()
         con.close()
 
@@ -63,6 +64,23 @@ class ToolAccessHookTest(unittest.TestCase):
             self.assertBlocked(self.run_hook({"tool_name": "read_file", "session_id": "s-owner",
                                               "tool_input": {"path": path}}))
 
+    def test_owner_reads_inbound_attachments(self):
+        home = Path.home() / ".hermes" / "zalo-hook-test-profile"
+        docs = home / "cache" / "documents" / "x"
+        docs.mkdir(parents=True, exist_ok=True)
+        (home / "state.db").write_bytes((self.home / "state.db").read_bytes())
+        try:
+            run = lambda path: self.run_bare({"tool_name": "read_file", "session_id": "s-owner",
+                                              "tool_input": {"path": str(path)}}, "--owner", OWNER,
+                                             "--log", os.devnull, "--profile-home", str(home))
+            self.assertIsNone(run(docs / "doc_1_test.txt"))
+            self.assertBlocked(run(docs / ".env"))
+            self.assertBlocked(run(home / "config.yaml"))
+            self.assertBlocked(run(docs / ".." / ".." / ".." / "auth.json"))
+        finally:
+            import shutil
+            shutil.rmtree(home, ignore_errors=True)
+
     def test_extra_tools_and_secret_paths(self):
         self.assertIsNone(self.run_hook({"tool_name": "web_search", "session_id": "s-owner"},
                                         "--extra-tools", "web_search"))
@@ -88,6 +106,31 @@ class ToolAccessHookTest(unittest.TestCase):
                            capture_output=True, text=True, env=e, timeout=10)
         self.assertEqual(json.loads(p.stdout)["action"], "block")
 
+    def test_owner_mode_full_dm(self):
+        args = ("--owner-mode", "full-dm")
+        self.assertIsNone(self.run_hook({"tool_name": "terminal", "session_id": "s-owner"}, *args))
+        self.assertIsNone(self.run_hook({"tool_name": "read_file", "session_id": "s-owner",
+                                         "tool_input": {"path": "~/.hermes/config.yaml"}}, *args))
+        self.assertBlocked(self.run_hook({"tool_name": "read_file", "session_id": "s-owner",
+                                          "tool_input": {"path": "~/.hermes/.env"}}, *args))
+        self.assertBlocked(self.run_hook({"tool_name": "write_file", "session_id": "s-owner",
+                                          "tool_input": {"path": "/x/auth.json"}}, *args))
+        # groups stay read-only; strangers stay blocked; unknown chat type is not a DM
+        self.assertBlocked(self.run_hook({"tool_name": "terminal", "session_id": "s-owner-group"}, *args))
+        self.assertIsNone(self.run_hook({"tool_name": "read_file", "session_id": "s-owner-group",
+                                         "tool_input": {"path": "/tmp"}}, *args))
+        self.assertBlocked(self.run_hook({"tool_name": "terminal", "session_id": "s-stranger"}, *args))
+        self.assertBlocked(self.run_hook({"tool_name": "terminal"}, *args, env={
+            "HERMES_SESSION_PLATFORM": "zalo", "HERMES_SESSION_USER_ID": OWNER}))
+
+    def test_owner_mode_full_and_bad_mode(self):
+        self.assertIsNone(self.run_hook({"tool_name": "terminal", "session_id": "s-owner-group"},
+                                        "--owner-mode", "full"))
+        self.assertBlocked(self.run_hook({"tool_name": "terminal", "session_id": "s-owner"},
+                                         "--owner-mode", "yolo"))
+        (self.home / ".env").write_text("ZALO_HOOK_OWNER_MODE=full-dm\n")
+        self.assertIsNone(self.run_hook({"tool_name": "terminal", "session_id": "s-owner"}))
+
     def test_env_vars_configure_owner(self):
         e = {k: v for k, v in os.environ.items() if not k.startswith(("ZALO_HOOK_", "HERMES_SESSION_"))}
         e.update(ZALO_HOOK_OWNERS=OWNER, ZALO_HOOK_PROFILE_HOME=str(self.home))
@@ -97,6 +140,32 @@ class ToolAccessHookTest(unittest.TestCase):
                            capture_output=True, text=True, env=e, timeout=10)
         self.assertEqual(p.stdout.strip(), "")
         self.assertIn("ALLOW owner", (self.home / "logs" / "zalo-tool-access.log").read_text())
+
+    def run_bare(self, payload, *args, env=None):
+        e = {k: v for k, v in os.environ.items() if not k.startswith(("ZALO_HOOK_", "HERMES_SESSION_"))}
+        e.update(env or {})
+        p = subprocess.run([sys.executable, str(HOOK), "--profile-home", str(self.home), *args],
+                           input=json.dumps(payload), capture_output=True, text=True, env=e, timeout=10)
+        return json.loads(p.stdout) if p.stdout.strip() else None
+
+    def test_profile_dotenv_configures_hook(self):
+        (self.home / ".env").write_text(
+            "# comment\nOPENAI_API_KEY=sk-x\n"
+            f"export ZALO_HOOK_OWNERS=\"{OWNER},333\"\n"
+            "ZALO_HOOK_EXTRA_TOOLS=web_search # inline comment\n"
+            "ZALO_HOOK_SECRET_PATHS='private'\n")
+        self.assertIsNone(self.run_bare({"tool_name": "web_search", "session_id": "s-owner"}))
+        self.assertBlocked(self.run_bare({"tool_name": "read_file", "session_id": "s-owner",
+                                          "tool_input": {"path": "~/private/a"}}))
+        self.assertBlocked(self.run_bare({"tool_name": "read_file", "session_id": "s-stranger",
+                                          "tool_input": {"path": "/tmp"}}))
+
+    def test_args_and_process_env_override_dotenv(self):
+        (self.home / ".env").write_text(f"ZALO_HOOK_OWNERS={STRANGER}\n")
+        ok = {"tool_name": "read_file", "session_id": "s-owner", "tool_input": {"path": "/tmp"}}
+        self.assertBlocked(self.run_bare(ok))
+        self.assertIsNone(self.run_bare(ok, env={"ZALO_HOOK_OWNERS": OWNER}))
+        self.assertIsNone(self.run_bare(ok, "--owner", OWNER))
 
 
 if __name__ == "__main__":

@@ -344,6 +344,34 @@ class ZaloAdapter(BasePlatformAdapter):
         # (allow_all_env in register()), not here. Without it — or an allowlist
         # or pairing — Hermes refuses unknown senders before they reach us.
 
+        # Owner uids. Their sessions carry a chat_topic saying so; a display name
+        # cannot, since anyone can rename themselves. Falls back to the tool-access
+        # hook's owner list, then to the platform's `allow_admin_from` (config.yaml),
+        # which a multiplexed gateway passes in even when it keeps the profile's
+        # .env out of os.environ.
+        owners = _csv_env("ZALO_OWNER_IDS", "owner_ids")
+        if not owners:
+            owners = [x.strip() for x in (os.getenv("ZALO_HOOK_OWNERS") or "").split(",") if x.strip()]
+        if not owners:
+            admins = extra.get("allow_admin_from") or []
+            owners = [str(x).strip() for x in (admins if isinstance(admins, list) else [admins]) if str(x).strip()]
+        self._owner_ids = set(owners)
+        logger.info("Zalo: %d owner uid(s) configured", len(self._owner_ids))
+
+        # A file/image/video sent without a caption does not start a turn: it is
+        # held (not downloaded yet) and attached to the same sender's next text
+        # message in the same chat, if that arrives within this many seconds.
+        # 0 restores the old behaviour (reply to the attachment on its own).
+        raw_wait = os.getenv("ZALO_MEDIA_WAIT")
+        if raw_wait is None:
+            raw_wait = extra.get("media_wait", 300)
+        try:
+            self.media_wait = max(0, int(float(raw_wait)))
+        except (TypeError, ValueError):
+            self.media_wait = 300
+        # (thread_id, sender_id) -> [(monotonic time, media dict)]
+        self._held_media: Dict[tuple, List[tuple]] = {}
+
         # Log inbound uid/threadId to help operators discover ids for allowlists.
         self.log_ids = _truthy(os.getenv("ZALO_LOG_IDS")) if os.getenv("ZALO_LOG_IDS") else bool(extra.get("log_ids", False))
 
@@ -680,6 +708,10 @@ class ZaloAdapter(BasePlatformAdapter):
             logger.debug("Zalo: ignoring message from non-allowed user %s", sender_id)
             return
 
+        # Caption-less attachment: hold it for the sender's next text message.
+        if self._hold_media(m, thread_id, sender_id):
+            return
+
         # C) Group response mode: off / mention / all.
         if chat_type == "group":
             if self.group_mode == "off":
@@ -697,19 +729,25 @@ class ZaloAdapter(BasePlatformAdapter):
             chat_type=chat_type,
             user_id=sender_id,
             user_name=sender_name,
+            chat_topic=self._OWNER_TOPIC if sender_id in self._owner_ids else None,
         )
 
         # Download inbound media so the agent can see/hear it.
         media_urls: List[str] = []
         media_types: List[str] = []
         message_type = MessageType.TEXT
+        held = self._take_held_media(thread_id, sender_id)
         media = m.get("media")
-        if isinstance(media, dict) and media.get("url"):
-            local_path, mtype = await self._download_media(media)
+        items = held + ([media] if isinstance(media, dict) and media.get("url") else [])
+        for item in items:
+            local_path, mtype = await self._download_media(item)
             if local_path:
                 media_urls.append(local_path)
-                media_types.append(media.get("mime") or "")
-                message_type = mtype
+                media_types.append(item.get("mime") or "")
+                if message_type == MessageType.TEXT:
+                    message_type = mtype
+        if held:
+            logger.info("Zalo: attached %d held attachment(s) from %s to their message", len(held), sender_id)
 
         event = MessageEvent(
             text=text,
@@ -724,6 +762,44 @@ class ZaloAdapter(BasePlatformAdapter):
         )
         self._remember_quote(m)
         await self.handle_message(event)
+
+    _OWNER_TOPIC = "Sender is the bot owner (verified by the Zalo adapter from their Zalo uid)."
+
+    _HELD_MEDIA_KINDS = {"file", "image", "video"}
+    _HELD_MEDIA_PER_CHAT = 10
+
+    def _hold_media(self, m: Dict[str, Any], thread_id: str, sender_id: str) -> bool:
+        """Hold a caption-less file/image/video; True when it was held."""
+        media = m.get("media")
+        if not self.media_wait or not isinstance(media, dict) or not media.get("url"):
+            return False
+        kind = media.get("kind")
+        if kind not in self._HELD_MEDIA_KINDS:
+            return False
+        text = (m.get("text") or "").strip()
+        # The bridge sets "[file: <name>]" as a file's text; images and videos carry their caption.
+        if text and not (kind == "file" and text.startswith("[file:") and text.endswith("]")):
+            return False
+        now = time.monotonic()
+        self._prune_held_media(now)
+        held = self._held_media.setdefault((thread_id, sender_id), [])
+        held.append((now, media))
+        del held[:-self._HELD_MEDIA_PER_CHAT]
+        logger.info("Zalo: holding %s from %s in %s until a text message (up to %ss)",
+                    kind, sender_id, thread_id, self.media_wait)
+        return True
+
+    def _take_held_media(self, thread_id: str, sender_id: str) -> List[Dict[str, Any]]:
+        self._prune_held_media(time.monotonic())
+        return [media for _, media in self._held_media.pop((thread_id, sender_id), [])]
+
+    def _prune_held_media(self, now: float) -> None:
+        for key in list(self._held_media):
+            fresh = [x for x in self._held_media[key] if now - x[0] <= self.media_wait]
+            if fresh:
+                self._held_media[key] = fresh
+            else:
+                del self._held_media[key]
 
     _QUOTE_CACHE_MAX = 500
 
