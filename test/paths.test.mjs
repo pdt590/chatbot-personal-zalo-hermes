@@ -68,3 +68,38 @@ test("writePrivateFile creates owner-only files and tightens existing ones", { s
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("resolveHermesHome maps a profile name like Hermes does", async () => {
+  const { resolveHermesHome, profileHome, hermesRoot } = await import("../paths.js");
+  const root = hermesRoot({});
+  assert.equal(profileHome("default", {}), root);
+  assert.equal(profileHome("Zalo8806", {}), path.join(root, "profiles", "zalo8806"));
+
+  const named = resolveHermesHome(["--profile", "zalo8806"], {});
+  assert.deepEqual(named, { dir: path.join(root, "profiles", "zalo8806"), profile: "zalo8806", source: "profile" });
+  assert.equal(resolveHermesHome(["-p=work"], {}).dir, path.join(root, "profiles", "work"));
+  assert.equal(resolveHermesHome(["--profile", "default"], {}).dir, root);
+
+  const fromEnv = resolveHermesHome([], { HERMES_PROFILE: "work" });
+  assert.equal(fromEnv.source, "env-profile");
+  assert.equal(fromEnv.dir, path.join(root, "profiles", "work"));
+  assert.equal(resolveHermesHome([], {}).source, "default");
+
+  assert.throws(() => resolveHermesHome(["--profile", "../etc"], {}), /not a valid Hermes profile name/);
+  assert.throws(() => resolveHermesHome(["--profile"], {}), /requires a value/);
+  assert.throws(() => resolveHermesHome(["--profile", "a", "--hermes-home", "/x"], {}), /not both/);
+});
+
+test("profiles live under a custom HERMES_HOME root, and --hermes-home names its profile", async () => {
+  const { resolveHermesHome, hermesRoot } = await import("../paths.js");
+  const custom = path.resolve("/opt/data");
+  assert.equal(hermesRoot({ HERMES_HOME: custom }), custom);
+  assert.equal(hermesRoot({ HERMES_HOME: path.join(custom, "profiles", "x") }), custom);
+  assert.equal(
+    resolveHermesHome(["--profile", "work"], { HERMES_HOME: custom }).dir,
+    path.join(custom, "profiles", "work"),
+  );
+  const explicit = resolveHermesHome(["--hermes-home", path.join(custom, "profiles", "lily")], {});
+  assert.equal(explicit.source, "flag");
+  assert.equal(explicit.profile, "lily");
+});

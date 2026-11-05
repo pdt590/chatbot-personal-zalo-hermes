@@ -6,8 +6,9 @@
 //   node install.mjs --no-service    # deps → login only (run `npm start` yourself)
 //   node install.mjs --relogin       # force a fresh QR login
 //   node install.mjs --service-only  # (re)install just the background service
-//   node install.mjs --hermes-home ~/hermes-work   # install the adapter into this
-//                                    # Hermes profile instead of ~/.hermes
+//   node install.mjs --profile <name> # install the adapter into this Hermes profile
+//                                    # (~/.hermes/profiles/<name>; "default" = ~/.hermes)
+//   node install.mjs --hermes-home <dir>  # advanced: an explicit Hermes home directory
 //   node install.mjs --with-hook     # also install the tool-access hook
 //   node install.mjs --hook-owner <uid> [--hook-mode read|full-dm|full]
 //                                    # hook + owner settings in the profile .env
@@ -19,7 +20,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { dataDir, logDir, resolveHermesHome } from "./paths.js";
+import { dataDir, hermesHomeSourceLabel, logDir, resolveHermesHome } from "./paths.js";
 import { restartService, serviceInstalled, stopService } from "./service.js";
 import {
   HOOK_FILE, addPreToolHook, enablePlatformToolsets, readProvidedToolsets, setEnvVar,
@@ -54,6 +55,24 @@ if (HOOK_MODE != null && !["read", "full-dm", "full"].includes(HOOK_MODE)) {
 }
 
 const PLATFORM = process.platform; // 'darwin' | 'linux' | 'win32'
+
+// Where the Hermes adapter goes. Resolved up front so a typo in --profile
+// fails before the QR login and service steps.
+let HERMES_HOME_TARGET;
+try {
+  HERMES_HOME_TARGET = resolveHermesHome(argv);
+} catch (e) {
+  die(e.message);
+}
+// A named profile is created by Hermes (it seeds config, .env, skills…); a
+// missing one is almost always a typo, so stop instead of inventing it.
+if ((HERMES_HOME_TARGET.source === "profile" || HERMES_HOME_TARGET.source === "env-profile")
+    && HERMES_HOME_TARGET.profile !== "default" && !fs.existsSync(HERMES_HOME_TARGET.dir)) {
+  const p = HERMES_HOME_TARGET.profile;
+  die(`Hermes profile '${p}' not found at ${HERMES_HOME_TARGET.dir}.\n` +
+    `  Create it first:  hermes profile create ${p}\n` +
+    "  (list existing ones with: hermes profile list)");
+}
 
 // The service must outlive Node upgrades. process.execPath often points into a
 // versioned directory that the package manager deletes on the next update
@@ -300,7 +319,7 @@ function installService() {
 // ── 4. Install the Hermes-side plugin so `hermes gateway` sees Zalo ──────────
 // The bridge (Node) and the Hermes adapter (Python) are separate halves. The
 // adapter lives under hermes-plugin/ in this package; copy it into the user's
-// Hermes plugin dir (~/.hermes/plugins/zalo) and add "zalo" to plugins.enabled
+// Hermes plugin dir (<hermes home>/plugins/zalo) and add "zalo" to plugins.enabled
 // so the (untrusted) user plugin is allowed to load.
 function installHermesPlugin() {
   step(4, "Installing the Hermes plugin (so `hermes gateway` sees Zalo)…");
@@ -309,23 +328,14 @@ function installHermesPlugin() {
     log("⚠ hermes-plugin/ not found in package — skipping (bridge still works standalone).");
     return;
   }
-  let home;
-  try {
-    home = resolveHermesHome(argv);
-  } catch (e) {
-    die(e.message);
-  }
+  const home = HERMES_HOME_TARGET;
   const hermesHome = home.dir;
-  const from = home.source === "flag" ? "--hermes-home"
-    : home.source === "env" ? "HERMES_HOME"
-    : "default ~/.hermes";
-  log(`Hermes home: ${hermesHome} (${from})`);
-  // Never create the default ~/.hermes. A profile only gets the plugin when
-  // the user pointed at it (--hermes-home / HERMES_HOME) or Hermes is already there.
+  log(`Hermes profile: ${home.profile ?? "(custom)"} → ${hermesHome} (${hermesHomeSourceLabel(home)})`);
   if (!fs.existsSync(hermesHome)) {
+    // Never create the default home: Hermes may simply not be installed yet.
     if (home.source === "default") {
       log(`⚠ Hermes home not found at ${hermesHome}.`);
-      log("  Skipping plugin install. Pass --hermes-home <path> for a non-default profile,");
+      log("  Skipping plugin install. Pass --profile <name> for a named Hermes profile,");
       log("  or install Hermes and re-run: npx hermes-zalo-plugin setup --service-only");
       return;
     }
@@ -355,13 +365,13 @@ function installHermesPlugin() {
     log(`  Manually add "zalo-platform" under plugins.enabled in ${cfgPath}`);
   }
   enablePluginToolsets(cfgPath, path.join(src, "plugin.yaml"));
-  installToolAccessHook(hermesHome, cfgPath);
+  installToolAccessHook(home, cfgPath);
 }
 
 // ── 5. Optional pre_tool_call hook limiting what Zalo users can make the agent do ─
 // Opt-in (--with-hook / --hook-owner / --hook-mode): with no owner set it blocks
 // every tool for Zalo users. Once installed, re-runs keep it up to date.
-function installToolAccessHook(hermesHome, cfgPath) {
+function installToolAccessHook({ dir: hermesHome, profile }, cfgPath) {
   const src = path.join(__dirname, "hooks", HOOK_FILE);
   const dest = path.join(hermesHome, "agent-hooks", HOOK_FILE);
   const installed = fs.existsSync(dest);
@@ -417,9 +427,8 @@ function installToolAccessHook(hermesHome, cfgPath) {
   }
 
   if (status === "added" || status === "updated") {
-    const profile = path.basename(path.dirname(hermesHome)) === "profiles" ? path.basename(hermesHome) : null;
     log("  Hermes runs a new or changed hook only after you approve it:");
-    log(`    hermes ${profile ? `-p ${profile} ` : ""}--accept-hooks   (or HERMES_ACCEPT_HOOKS=1)`);
+    log(`    hermes ${profile && profile !== "default" ? `-p ${profile} ` : ""}--accept-hooks   (or HERMES_ACCEPT_HOOKS=1)`);
     log("  then restart the gateway.");
   }
 }

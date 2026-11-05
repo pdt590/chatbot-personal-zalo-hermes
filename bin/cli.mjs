@@ -104,8 +104,10 @@ function help() {
 
 Commands:
   setup        Log in (QR) if needed and install a background auto-start service
-               --hermes-home <path>   copy the adapter into this Hermes profile
-                                      instead of ~/.hermes (also reads HERMES_HOME)
+               -p, --profile <name>   Hermes profile to install the adapter into
+                                      (default = ~/.hermes, <name> = ~/.hermes/profiles/<name>;
+                                      also reads HERMES_PROFILE)
+               --hermes-home <dir>    advanced: explicit Hermes home (also reads HERMES_HOME)
                --with-hook            also install the tool access hook
                --hook-owner <uid>     hook + owner uid(s) in the profile .env
                --hook-mode <m>        owner mode: read | full-dm | full
@@ -115,14 +117,14 @@ Commands:
   stop         Stop the background service (stays installed; 'restart' brings it back)
   status       Show bridge health and the data directory
   uninstall    Remove the service, adapter and tool access hook (--purge also deletes credentials)
-               --hermes-home <path>   remove the adapter and hook from that Hermes profile
+               -p, --profile <name>   remove the adapter and hook from that Hermes profile
   help         Show this message
 
 Data lives in ~/.hermes-zalo/ (override with ZALO_DATA_DIR). Bridge settings
 (token, action policy) are read from ~/.hermes-zalo/bridge.env, which
 'hermes gateway setup' writes for you.
-The Hermes adapter is installed into ~/.hermes only when that directory already
-exists. For another profile:  hermes-zalo-plugin setup --hermes-home <path>
+The Hermes adapter goes into the default profile (~/.hermes) only when it already
+exists. For a named profile:  hermes-zalo-plugin setup --profile <name>
 After 'setup', register it in Hermes:  hermes gateway setup  → choose Zalo.`);
 }
 

@@ -6,7 +6,7 @@
 #
 #   ./uninstall.sh                          # remove service + adapter, keep the Zalo login
 #   ./uninstall.sh --purge                  # also delete the saved Zalo login (credentials)
-#   ./uninstall.sh --hermes-home <path>     # remove the adapter from that Hermes profile
+#   ./uninstall.sh --profile <name>         # remove the adapter from that Hermes profile
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

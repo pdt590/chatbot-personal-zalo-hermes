@@ -17,7 +17,7 @@ You may use the Zalo account **Hubplus** (logged in on chat.zalo.me in the openc
    ```bash
    npm pack --pack-destination "$SCRATCH" && npm install -g "$SCRATCH"/hermes-zalo-plugin-<ver>.tgz
    hermes-zalo-plugin setup --service-only                                        # restart bridge service + copy plugin to ~/.hermes
-   hermes-zalo-plugin setup --service-only --hermes-home ~/.hermes/profiles/zalo8806  # Lily's profile has its OWN plugin copy
+   hermes-zalo-plugin setup --service-only --profile zalo8806  # Lily's profile has its OWN plugin copy
    systemctl --user restart hermes-gateway.service
    hermes-zalo-plugin status          # expect loggedIn=true ownName=Lily
    grep -i zalo ~/.hermes/logs/gateway.log | tail -2   # expect "✓ zalo connected (profile: zalo8806)"

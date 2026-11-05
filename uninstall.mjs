@@ -4,7 +4,8 @@
 //
 //   node uninstall.mjs              # stop + remove the auto-start service
 //   node uninstall.mjs --purge      # also delete the saved credentials (logout)
-//   node uninstall.mjs --hermes-home <path>   # remove the adapter from that profile
+//   node uninstall.mjs --profile <name>       # remove the adapter from that Hermes profile
+//   node uninstall.mjs --hermes-home <dir>    # advanced: an explicit Hermes home directory
 //
 // Wrappers: ./uninstall.sh (macOS/Linux), .\uninstall.ps1 (Windows).
 
@@ -12,11 +13,19 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { credentialsPath, dataDir, resolveHermesHome } from "./paths.js";
+import { credentialsPath, dataDir, hermesHomeSourceLabel, resolveHermesHome } from "./paths.js";
 import { HOOK_FILE, removePreToolHook } from "./hermesConfig.js";
 
 const argv = process.argv.slice(2);
 const PURGE = argv.includes("--purge");
+// Resolved before anything is removed, so a bad --profile changes nothing.
+let HERMES_HOME_TARGET;
+try {
+  HERMES_HOME_TARGET = resolveHermesHome(argv);
+} catch (e) {
+  console.error(`\n✗ ${e.message}`);
+  process.exit(1);
+}
 const PLATFORM = process.platform;
 const LABEL = "com.hermes.zaloplugin";
 
@@ -65,19 +74,15 @@ function removeService() {
 }
 
 // Mirror of install.mjs installHermesPlugin(): remove the Python adapter from
-// ~/.hermes/plugins/zalo and drop "zalo-platform" from plugins.enabled. Leaves
+// <hermes home>/plugins/zalo and drop "zalo-platform" from plugins.enabled. Leaves
 // the rest of config.yaml untouched.
 function removeHermesPlugin() {
-  let home;
-  try {
-    home = resolveHermesHome(argv);
-  } catch (e) {
-    console.error(`\n✗ ${e.message}`);
-    process.exit(1);
-  }
+  const home = HERMES_HOME_TARGET;
   const hermesHome = home.dir;
-  if (home.source === "default" && !fs.existsSync(hermesHome)) {
-    log(`• No Hermes home at ${hermesHome}. Pass --hermes-home <path> if the plugin lives in another profile.`);
+  log(`Hermes profile: ${home.profile ?? "(custom)"} → ${hermesHome} (${hermesHomeSourceLabel(home)})`);
+  if (!fs.existsSync(hermesHome)) {
+    log(`• No Hermes home at ${hermesHome}.` +
+      (home.source === "default" ? " Pass --profile <name> if the plugin lives in a named profile." : ""));
     return;
   }
   const dest = path.join(hermesHome, "plugins", "zalo");

@@ -4,7 +4,7 @@
 #
 #   .\uninstall.ps1                          # remove task + adapter, keep the Zalo login
 #   .\uninstall.ps1 --purge                  # also delete the saved Zalo login (credentials)
-#   .\uninstall.ps1 --hermes-home <path>     # remove the adapter from that Hermes profile
+#   .\uninstall.ps1 --profile <name>         # remove the adapter from that Hermes profile
 #
 # If you get an execution-policy error, run once:
 #   Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
