@@ -346,6 +346,91 @@ export function disablePluginInConfig(cfgText) {
   return { text, removed: false };
 }
 
+// ── platforms.<name>.enabled ────────────────────────────────────────────────
+// On the shared (multiplexing) gateway the default profile must load the Zalo
+// plugin for every profile, without connecting to the bridge itself.
+
+// Indexes of the top-level `platforms:` key, its `<platform>:` child and that
+// child's `enabled:` line (-1 when absent).
+function findPlatformKeys(lines, platform) {
+  const top = lines.findIndex((l) => /^platforms:\s*(#.*)?$/.test(l));
+  if (top === -1) return { top, key: -1, enabled: -1 };
+  const end = blockEnd(lines, top);
+  let key = -1;
+  let childIndent = -1;
+  for (let i = top + 1; i < end; i++) {
+    if (isBlank(lines[i])) continue;
+    if (childIndent === -1) childIndent = indentOf(lines[i]);
+    if (indentOf(lines[i]) !== childIndent) continue;
+    if (new RegExp(`^\\s+["']?${platform}["']?:\\s*(#.*)?$`).test(lines[i])) { key = i; break; }
+  }
+  if (key === -1) return { top, key, enabled: -1, childIndent };
+  const kEnd = blockEnd(lines, key);
+  let grand = -1;
+  for (let j = key + 1; j < kEnd; j++) {
+    if (isBlank(lines[j])) continue;
+    if (grand === -1) grand = indentOf(lines[j]);
+    if (indentOf(lines[j]) === grand && /^\s+enabled:/.test(lines[j])) return { top, key, enabled: j, childIndent };
+  }
+  return { top, key, enabled: -1, childIndent, grandIndent: grand };
+}
+
+/** `platforms.<platform>.enabled` as written: true, false, or null when unset. */
+export function getPlatformEnabled(cfgText, platform) {
+  const lines = String(cfgText || "").split("\n");
+  const { enabled } = findPlatformKeys(lines, platform);
+  if (enabled === -1) return null;
+  const v = lines[enabled].replace(/#.*$/, "").split(":").slice(1).join(":").trim().replace(/^["']|["']$/g, "");
+  if (/^(true|yes|on|1)$/i.test(v)) return true;
+  if (/^(false|no|off|0)$/i.test(v)) return false;
+  return null;
+}
+
+/**
+ * Write `platforms.<platform>.enabled: <value>`, creating the keys as needed.
+ * @returns {{ text: string, status: "already"|"updated"|"added" }}
+ */
+export function setPlatformEnabled(cfgText, platform, value) {
+  const text = String(cfgText || "");
+  const lines = text.split("\n");
+  const want = value ? "true" : "false";
+  const k = findPlatformKeys(lines, platform);
+  if (k.enabled !== -1) {
+    if (getPlatformEnabled(text, platform) === value) return { text, status: "already" };
+    const ind = " ".repeat(indentOf(lines[k.enabled]));
+    lines[k.enabled] = `${ind}enabled: ${want}`;
+    return { text: lines.join("\n"), status: "updated" };
+  }
+  if (k.top === -1) {
+    const sep = text.length && !text.endsWith("\n") ? "\n" : "";
+    return { text: `${text}${sep}platforms:\n  ${platform}:\n    enabled: ${want}\n`, status: "added" };
+  }
+  if (k.key === -1) {
+    const ci = k.childIndent > 0 ? k.childIndent : 2;
+    lines.splice(k.top + 1, 0, `${" ".repeat(ci)}${platform}:`, `${" ".repeat(ci * 2)}enabled: ${want}`);
+    return { text: lines.join("\n"), status: "added" };
+  }
+  const ki = indentOf(lines[k.key]);
+  const gi = k.grandIndent > ki ? k.grandIndent : ki + 2;
+  lines.splice(k.key + 1, 0, `${" ".repeat(gi)}enabled: ${want}`);
+  return { text: lines.join("\n"), status: "added" };
+}
+
+/**
+ * Undo setPlatformEnabled(…, false): drop `enabled: false`, then the
+ * `<platform>:` key (and `platforms:`) when nothing else is left under it.
+ * @returns {{ text: string, removed: boolean }}
+ */
+export function removePlatformDisabled(cfgText, platform) {
+  const text = String(cfgText || "");
+  if (getPlatformEnabled(text, platform) !== false) return { text, removed: false };
+  const lines = text.split("\n");
+  const k = findPlatformKeys(lines, platform);
+  lines.splice(k.enabled, 1);
+  pruneEmptyKeys(lines, k.key);
+  return { text: lines.join("\n"), removed: true };
+}
+
 // Index of "enabled:" inside the top-level plugins: block, or -1.
 function findEnabled(lines, pluginsIdx) {
   for (let i = pluginsIdx + 1; i < lines.length; i++) {

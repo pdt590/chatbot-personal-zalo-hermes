@@ -227,5 +227,38 @@ export function hermesHomeSourceLabel(home) {
     profile: `--profile ${home.profile}`,
     flag: "--hermes-home",
     default: "default profile",
+    host: "host of the shared gateway",
+    scan: "has the adapter",
   }[home.source] || home.source;
+}
+
+// ── One gateway per host ────────────────────────────────────────────────────
+// Current Hermes runs a single multiplexing gateway: the default profile's
+// process serves every profile under <root>/profiles. A named profile's Zalo
+// adapter therefore runs inside the default profile's gateway, which must be
+// able to load the plugin too.
+
+/** Root (default-profile) home of a named profile's home, or null if `dir` is not `<root>/profiles/<name>`. */
+export function hostHomeOf(dir) {
+  const resolved = path.resolve(dir);
+  const parent = path.dirname(resolved);
+  return path.basename(parent) === "profiles" ? path.dirname(parent) : null;
+}
+
+/** Every existing profile home under `root`: the root itself plus `profiles/*`. */
+export function profileHomesUnder(root) {
+  const out = [];
+  if (fs.existsSync(root)) out.push({ dir: path.resolve(root), profile: "default" });
+  let names = [];
+  try {
+    names = fs.readdirSync(path.join(root, "profiles"), { withFileTypes: true })
+      .filter((e) => e.isDirectory() && PROFILE_ID_RE.test(e.name)).map((e) => e.name).sort();
+  } catch { /* no profiles/ */ }
+  for (const name of names) out.push({ dir: path.join(path.resolve(root), "profiles", name), profile: name });
+  return out;
+}
+
+/** Is the Zalo adapter installed in this Hermes home? */
+export function hasZaloAdapter(dir) {
+  return fs.existsSync(path.join(dir, "plugins", "zalo", "adapter.py"));
 }

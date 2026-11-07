@@ -14,18 +14,23 @@
 //   node bin/cli.mjs setup --hook-owner <uid> [--hook-mode read|full-dm|full]
 //                                           # hook + owner settings in the profile .env
 //
-// After this, the end-user only needs:  hermes gateway setup  → choose Zalo.
+// After this, the end-user only needs:  hermes [-p <name>] gateway setup  → choose Zalo,
+// then `hermes gateway restart`: current Hermes runs ONE gateway per host (the
+// default profile's), which serves every profile.
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { hermesHomeSourceLabel, logDir, resolveHermesHomes } from "./paths.js";
+import {
+  hasZaloAdapter, hermesHomeSourceLabel, hostHomeOf, logDir, parseEnvFile, resolveHermesHomes,
+} from "./paths.js";
 import {
   LABEL, WIN_TASK, plistPath, restartService, serviceInstalled, stopService, unitPath, winLauncherPath,
 } from "./service.js";
 import {
-  HOOK_FILE, addPreToolHook, enablePlatformToolsets, enablePluginInConfig, readProvidedToolsets, setEnvVar,
+  HOOK_FILE, addPreToolHook, enablePlatformToolsets, enablePluginInConfig, getPlatformEnabled,
+  readProvidedToolsets, setEnvVar, setPlatformEnabled,
 } from "./hermesConfig.js";
 import { CLI, banner } from "./ui.js";
 
@@ -318,21 +323,11 @@ function installHermesPlugins() {
     return;
   }
   for (const home of HERMES_HOMES) installHermesPlugin(src, home);
+  for (const [root, names] of hostHomesFor(HERMES_HOMES)) installHostCopy(src, root, names);
 }
 
-function installHermesPlugin(src, home) {
-  const hermesHome = home.dir;
-  log(`Hermes profile: ${home.profile ?? "(custom)"} → ${hermesHome} (${hermesHomeSourceLabel(home)})`);
-  if (!fs.existsSync(hermesHome)) {
-    // Never create the default home: Hermes may simply not be installed yet.
-    if (home.source === "default") {
-      log(`⚠ Hermes home not found at ${hermesHome}.`);
-      log("  Skipping plugin install. Pass --profile <name> for a named Hermes profile,");
-      log(`  or install Hermes and re-run: ${CLI} setup --service-only`);
-      return;
-    }
-    fs.mkdirSync(hermesHome, { recursive: true });
-  }
+// Copy the adapter files into <hermes home>/plugins/zalo.
+function copyAdapter(src, hermesHome) {
   const dest = path.join(hermesHome, "plugins", "zalo");
   fs.mkdirSync(dest, { recursive: true });
   // Files only: a checkout has hermes-plugin/__pycache__/, and copyFileSync on
@@ -348,9 +343,10 @@ function installHermesPlugin(src, home) {
   fs.writeFileSync(path.join(dest, "bridge_cli.json"),
     JSON.stringify({ node: NODE_BIN, cli: CLI_JS }, null, 2) + "\n");
   log(`✓ Plugin copied to ${dest}`);
+}
 
-  // Enable the plugin in config.yaml (plugins.enabled must contain "zalo-platform").
-  const cfgPath = path.join(hermesHome, "config.yaml");
+// Enable the plugin in config.yaml (plugins.enabled must contain "zalo-platform").
+function enablePlugin(cfgPath) {
   try {
     const before = fs.existsSync(cfgPath) ? fs.readFileSync(cfgPath, "utf-8") : "";
     const { text, status } = enablePluginInConfig(before);
@@ -362,8 +358,83 @@ function installHermesPlugin(src, home) {
     log(`⚠ Could not auto-enable the plugin: ${e.message}`);
     log(`  Manually add "zalo-platform" under plugins.enabled in ${cfgPath}`);
   }
+}
+
+function installHermesPlugin(src, home) {
+  const hermesHome = home.dir;
+  log(`Hermes profile: ${home.profile ?? "(custom)"} → ${hermesHome} (${hermesHomeSourceLabel(home)})`);
+  if (!fs.existsSync(hermesHome)) {
+    // Never create the default home: Hermes may simply not be installed yet.
+    if (home.source === "default") {
+      log(`⚠ Hermes home not found at ${hermesHome}.`);
+      log("  Skipping plugin install. Pass --profile <name> for a named Hermes profile,");
+      log(`  or install Hermes and re-run: ${CLI} setup --service-only`);
+      return;
+    }
+    fs.mkdirSync(hermesHome, { recursive: true });
+  }
+  copyAdapter(src, hermesHome);
+  const cfgPath = path.join(hermesHome, "config.yaml");
+  enablePlugin(cfgPath);
   enablePluginToolsets(cfgPath, path.join(src, "plugin.yaml"));
   installToolAccessHook(home, cfgPath);
+}
+
+// ── 4b. The shared gateway's host profile ────────────────────────────────────
+// Hermes runs ONE gateway per host: the default profile's process serves every
+// profile under <root>/profiles (gateway.multiplex_profiles). That process
+// restores the stored chat routes of every profile at start, before the named
+// profiles' plugins load; without the plugin in the default profile too, every
+// Zalo route is dropped ("'zalo' is not a valid Platform") and each chat starts
+// a new session after a restart. So when the adapter goes into named profiles
+// only, the default profile gets the same adapter files, with Zalo turned off
+// there (platforms.zalo.enabled: false) so it does not connect to the bridge.
+
+/** Map<root, [profile names]> of hosts whose named profiles are targeted but which are not targeted themselves. */
+function hostHomesFor(homes) {
+  const targeted = new Set(homes.map((h) => path.resolve(h.dir)));
+  const hosts = new Map();
+  for (const h of homes) {
+    const root = hostHomeOf(h.dir);
+    if (!root || targeted.has(root) || !fs.existsSync(root)) continue;
+    if (!hosts.has(root)) hosts.set(root, []);
+    hosts.get(root).push(h.profile ?? path.basename(h.dir));
+  }
+  return hosts;
+}
+
+function installHostCopy(src, root, names) {
+  log(`Hermes profile: default → ${root} (${hermesHomeSourceLabel({ source: "host" })} for ${names.join(", ")})`);
+  const hadAdapter = hasZaloAdapter(root);
+  copyAdapter(src, root);
+  const cfgPath = path.join(root, "config.yaml");
+  enablePlugin(cfgPath);
+  try {
+    const before = fs.existsSync(cfgPath) ? fs.readFileSync(cfgPath, "utf-8") : "";
+    const state = getPlatformEnabled(before, "zalo");
+    if (state === false) {
+      log("✓ Zalo stays off in the default profile (platforms.zalo.enabled: false)");
+    } else if (state === true) {
+      log("⚠ Zalo is enabled in the default profile too (platforms.zalo.enabled: true): the default");
+      log(`  profile and ${names.join(", ")} all read the same bridge and would all answer.`);
+      log(`  Set platforms.zalo.enabled: false in ${cfgPath} unless that is intended.`);
+    } else {
+      fs.writeFileSync(cfgPath, setPlatformEnabled(before, "zalo", false).text);
+      log("✓ Set platforms.zalo.enabled: false in config.yaml (the default profile loads the plugin");
+      log(`  for ${names.join(", ")} but does not answer on Zalo itself)`);
+      const envPath = path.join(root, ".env");
+      const env = fs.existsSync(envPath) ? parseEnvFile(fs.readFileSync(envPath, "utf-8")) : {};
+      if (hadAdapter && env.ZALO_PLUGIN_URL) {
+        log("  Zalo was set up in the default profile before. One bridge is one Zalo account, so");
+        log("  only one profile should answer on it. To keep it in the default profile instead, set");
+        log(`  platforms.zalo.enabled: true there and run: ${CLI} uninstall --profile ${names.join(",")}`);
+      }
+    }
+  } catch (e) {
+    log(`⚠ Could not edit ${cfgPath}: ${e.message}`);
+    log("  Add this by hand so the default profile does not answer on Zalo:");
+    log("    platforms:\n      zalo:\n        enabled: false");
+  }
 }
 
 // ── 5. Optional pre_tool_call hook limiting what Zalo users can make the agent do ─
@@ -427,7 +498,7 @@ function installToolAccessHook({ dir: hermesHome, profile }, cfgPath) {
   if (status === "added" || status === "updated") {
     log("  Hermes runs a new or changed hook only after you approve it:");
     log(`    hermes ${profile && profile !== "default" ? `-p ${profile} ` : ""}--accept-hooks   (or HERMES_ACCEPT_HOOKS=1)`);
-    log("  then restart the gateway.");
+    log("  then restart the shared gateway: hermes gateway restart");
   }
 }
 
@@ -461,6 +532,10 @@ function enablePluginToolsets(cfgPath, pluginYamlPath) {
 
 function nextSteps() {
   const port = process.env.ZALO_PLUGIN_PORT || "8787";
+  const setupCmds = HERMES_HOMES.map((h) => {
+    const p = h.profile && h.profile !== "default" ? `-p ${h.profile} ` : "";
+    return h.profile == null ? `HERMES_HOME=${h.dir} hermes gateway setup` : `hermes ${p}gateway setup`;
+  });
   console.log(`
 ────────────────────────────────────────────────────────
 ✓ Zalo plugin is set up.
@@ -469,8 +544,12 @@ function nextSteps() {
   Health:      curl http://127.0.0.1:${port}/health
 
 Next, register Zalo in Hermes:
-  1) hermes gateway setup     → choose "Zalo" (🇻🇳)
-  2) hermes gateway           → start relaying
+${[...setupCmds.map((c) => [c, 'choose "Zalo" (🇻🇳)']), ["hermes gateway restart", "reload the plugin"]]
+    .map(([c, what], i, all) => `  ${i + 1}) ${c.padEnd(Math.max(...all.map(([x]) => x.length)))}  → ${what}`).join("\n")}
+
+Hermes runs one gateway per host (the default profile's) and it serves every
+profile, so restart that one; do not start a gateway per profile. Not running
+yet? hermes gateway install && hermes gateway start
 
 The background service keeps the bridge running and restarts it on crash
 or reboot, so you only do the login + setup once.

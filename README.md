@@ -27,6 +27,7 @@ Linux and Windows.
    - [Environment variables read by the installer](#environment-variables-read-by-the-installer)
    - [Install examples](#install-examples)
    - [What gets installed where](#what-gets-installed-where)
+   - [Zalo in a named profile only (one shared gateway)](#zalo-in-a-named-profile-only-one-shared-gateway)
 4. [Configuration](#configuration)
 5. [Security](#security)
    - [Tool access hook (optional)](#tool-access-hook-optional)
@@ -62,7 +63,7 @@ node bin/cli.mjs setup --profile <name>
 
 # 3. Connect to Hermes (add -p <name> for a named profile).
 hermes gateway setup                 # choose "Zalo": allowed users, groups, permissions
-hermes gateway                       # start chatting
+hermes gateway restart               # the one shared gateway serves every profile
 ```
 
 The rest of this section explains every option. If the defaults suit you, you are
@@ -104,6 +105,7 @@ overwritten.
 | 2    | Zalo QR login (reuses the saved session if it still works).                                                                                                                                  | `--service-only`                                                  |
 | 3    | Registers the bridge as a background service: systemd user unit (Linux), launchd agent (macOS), Scheduled Task at logon (Windows).                                                           | `--no-service`                                                    |
 | 4    | Copies the Python adapter into `<profile>/plugins/zalo`, adds `zalo-platform` to `plugins.enabled` and the plugin toolsets to `platform_toolsets.zalo` in `<profile>/config.yaml`. | default profile missing                                             |
+| 4b   | Only when the adapter goes into named profiles but not `default`: copies the same adapter into `~/.hermes/plugins/zalo` (host of the [shared gateway](#zalo-in-a-named-profile-only-one-shared-gateway)), adds `zalo-platform` there, and sets `platforms.zalo.enabled: false` in `~/.hermes/config.yaml` unless that key is already set. | `default` is one of the target profiles |
 | 5    | Optional [tool access hook](#tool-access-hook-optional): copies it to `<profile>/agent-hooks/`, registers it under `hooks.pre_tool_call`, writes owner settings to `<profile>/.env`.    | runs only with a hook option, or when the hook is already installed |
 
 `<profile>` is the folder of the chosen Hermes profile.
@@ -236,12 +238,48 @@ node bin/cli.mjs setup --profile work
 There is **one bridge per machine** (one Zalo account), shared by every profile;
 each profile has **its own copy** of the adapter.
 
+### Zalo in a named profile only (one shared gateway)
+
+Current Hermes runs **one gateway per host** (`gateway.multiplex_profiles`): the
+default profile's gateway serves every profile, and `hermes -p <name> gateway
+install/start` refuses to start a second one. A named profile's Zalo adapter
+therefore runs **inside the default profile's process**. The installer handles
+what that needs:
+
+| Where                   | What                                                                                  | Why                                                                                                                                                                                                                   |
+| ----------------------- | ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `profiles/<name>/`      | adapter, `zalo-platform` enabled, `ZALO_*` in `.env` (written by `hermes -p <name> gateway setup`) | The profile's own Zalo settings: bridge URL, allowlists, owners, home channel, hook. The adapter reads them from **this profile's** `.env` (Hermes's per-profile secret scope, like the bundled Telegram adapter), never from `~/.hermes/.env`. |
+| `~/.hermes/` (default)  | host copy: `plugins/zalo/` + `zalo-platform` in `plugins.enabled`                      | The shared gateway restores every profile's stored chat routes at start, before the named profiles' plugins load. Without the plugin there, every Zalo route is skipped (`'zalo' is not a valid Platform`) and each chat starts a new session after a restart. |
+| `~/.hermes/config.yaml` | `platforms.zalo.enabled: false`                                                        | The default profile loads the plugin but does not connect to the bridge itself. One bridge is one Zalo account: two profiles on it would both answer.                                                                |
+
+Steps:
+
+```bash
+node bin/cli.mjs setup --profile lily   # lily + host copy in ~/.hermes
+hermes -p lily gateway setup            # choose "Zalo": writes lily's .env
+hermes gateway restart                  # the one gateway, for every profile
+grep -i zalo ~/.hermes/logs/gateway.log | tail -3
+```
+
+When it works, the log shows `✓ zalo connected (profile: lily)`, no
+`'zalo' is not a valid Platform` warnings, and no `✓ zalo connected` line
+without `(profile: …)` (that would be the default profile connecting too).
+
+If Zalo was set up in the default profile before, adding a named profile turns
+it off there (the installer says so). To keep Zalo in the default profile
+instead, set `platforms.zalo.enabled: true` in `~/.hermes/config.yaml` and
+uninstall it from the named profile. Older versions of this guide asked to copy
+`ZALO_*` into `~/.hermes/.env`; that is no longer needed, and those lines can be
+removed once `platforms.zalo.enabled: false` is set.
+
 ## Configuration
 
 `hermes gateway setup` (`hermes -p <name> gateway setup` for a named profile)
 writes both files below.
 
-**Adapter:** `<profile>/.env`. Restart `hermes gateway` after editing.
+**Adapter:** `<profile>/.env`. Restart the shared gateway after editing:
+`hermes -p <name> gateway restart` reconnects just that profile;
+`hermes gateway restart` restarts the one gateway for every profile.
 
 | Var                      | Default                                         | Meaning                                                                                       |
 | ------------------------ | ----------------------------------------------- | --------------------------------------------------------------------------------------------- |
@@ -416,7 +454,7 @@ Login and settings are kept.
 ```bash
 git pull && npm install
 node bin/cli.mjs setup --service-only --profile <name>[,<name>…]  # every profile that has the adapter
-hermes -p <name> gateway restart                # default profile: hermes gateway restart
+hermes gateway restart                          # new adapter code needs the shared gateway restarted
 ```
 
 Leave out `--profile` for the default profile. If you installed with `ZALO_*` path
@@ -432,10 +470,11 @@ Run it from the git checkout, on any OS: `node bin/cli.mjs uninstall [options]`.
 
 | Option / variable                            | Value           | Effect                                                                                                 |
 | -------------------------------------------- | --------------- | ------------------------------------------------------------------------------------------------------ |
-| `-p`, `--profile`                        | profile name(s) | Remove the adapter and hook from these profiles (comma-separated). Same rules as for install.          |
+| *(none)*                                     | —               | Remove Zalo **everywhere**: the adapter of every profile that has it, and the service.                 |
+| `-p`, `--profile`                        | profile name(s) | Remove the adapter and hook from these profiles only (comma-separated). Same rules as for install.     |
 | `--hermes-home`                            | folder          | Remove them from this folder instead.                                                                  |
-| `--purge`                                  | —              | Also delete the saved Zalo login (`credentials.json`). The next install shows a QR.                  |
-| `--hook-only`                              | —              | Remove **only** the tool access hook; keep the service, adapter and login. Not with `--purge`. |
+| `--purge`                                  | —              | Also delete the saved Zalo login (`credentials.json`). The next install shows a QR. Refused while another profile still uses Zalo. |
+| `--hook-only`                              | —              | Remove **only** the tool access hook; keep the service, adapter and login. Not with `--purge`. Without `--profile`: the default profile. |
 | `ZALO_DATA_DIR`, `ZALO_CREDENTIALS_PATH` | env vars        | Where to find the login if you moved it.                                                               |
 
 Unlike install, a missing profile is not an error: uninstall reports that there is
@@ -445,37 +484,38 @@ nothing to remove there and carries on.
 
 | Removed                                                               | Kept                                                         |
 | --------------------------------------------------------------------- | ------------------------------------------------------------ |
-| The background service (stopped and unregistered)                     | The bridge code (git checkout)                               |
-| `<profile>/plugins/zalo/`                                           | `~/.hermes-zalo/` (`bridge.env`, logs, caches)           |
-| `zalo-platform` in `plugins.enabled` of `<profile>/config.yaml` | The Zalo login, unless `--purge`                           |
+| `<profile>/plugins/zalo/`                                           | The bridge code (git checkout)                               |
+| `zalo-platform` in `plugins.enabled` of `<profile>/config.yaml` | `~/.hermes-zalo/` (`bridge.env`, logs, caches)           |
+| `platforms.zalo.enabled: false` (written by the installer)        | The Zalo login, unless `--purge`                           |
 | The hook file and its `hooks.pre_tool_call` entry                   | `ZALO_*` lines in `<profile>/.env` (reused on reinstall) |
-|                                                                       | `platform_toolsets.zalo` and the rest of `config.yaml`   |
+| The background service, **once no profile uses Zalo any more**       | `platform_toolsets.zalo` and the rest of `config.yaml`   |
 
-Uninstall always removes the **service** together with the adapter of the chosen
-profile. To remove Zalo from one profile but keep it in another, uninstall and
-then reinstall for the profile you keep:
+The bridge and the default profile's host copy are shared, so uninstall keeps
+them while another profile needs them:
 
-```bash
-node bin/cli.mjs uninstall --profile work
-node bin/cli.mjs setup --service-only --profile lily
-```
+- `uninstall --profile work` while `lily` still uses Zalo: removes `work`'s
+  adapter, keeps the service and the host copy in `~/.hermes`.
+- `uninstall --profile lily` for the last named profile: also removes the host
+  copy from `~/.hermes` (only if Zalo is off there) and the service.
+- `uninstall --profile default` while a named profile still uses Zalo: keeps the
+  adapter in `~/.hermes` (the shared gateway needs it) and only sets
+  `platforms.zalo.enabled: false`, so the default profile stops answering.
 
 ### Uninstall examples
 
 ```bash
-node bin/cli.mjs uninstall                      # default profile, keep the login
-node bin/cli.mjs uninstall --profile work       # named profile
-node bin/cli.mjs uninstall --profile work --purge  # also log out (delete credentials)
+node bin/cli.mjs uninstall                      # everything, keep the login
+node bin/cli.mjs uninstall --purge              # everything, and log out
+node bin/cli.mjs uninstall --profile work       # one named profile; the others keep Zalo
 node bin/cli.mjs uninstall --profile work --hook-only  # only the tool access hook
 
-# Remove everything
-node bin/cli.mjs uninstall --profile work,lily --purge  # every profile that had the adapter
+# Remove every trace
+node bin/cli.mjs uninstall --purge
 rm -rf ~/.hermes-zalo                           # bridge data
 rm -rf /path/to/the/git/checkout               # bridge code
-hermes -p work gateway restart
 ```
 
-Restart `hermes gateway` of each affected profile afterwards.
+Then restart the shared gateway: `hermes gateway restart`.
 
 ## CLI commands
 
@@ -519,6 +559,9 @@ The bridge listens on `127.0.0.1:8787`. With a token, send it as `x-bridge-token
 | `use either --profile or --hermes-home, not both`      | Keep only one of the two.                                                                                             |
 | `Hermes home not found at …/.hermes`, adapter skipped | No default profile. Pass `--profile <name>`, or install Hermes and re-run with `--service-only`.                  |
 | Zalo missing in `hermes gateway setup`                 | The adapter went into another profile: check the `Hermes profile: …` line and re-run with the right `--profile`. |
+| `[MULTIPLEX] Profile '<name>': … adapter creation returned None` | `ZALO_PLUGIN_URL` is missing from `~/.hermes/.env`. See [Zalo in a named profile only](#zalo-in-a-named-profile-only-one-shared-gateway). |
+| `Skipping invalid … entry 'agent:<name>:zalo:…': 'zalo' is not a valid Platform` | The default profile does not load the plugin: add `plugins/zalo` and `zalo-platform` to `~/.hermes` (`setup --service-only --profile default`). |
+| `✓ zalo connected` without `(profile: …)` next to a named profile's line | The default profile is connected too. Set `platforms.zalo.enabled: false` in `~/.hermes/config.yaml`, then `hermes gateway restart`. |
 | `loggedIn=false` or `sessionDead`                    | `node bin/cli.mjs login`; if the cookie is dead, `node bin/cli.mjs setup --relogin`.                              |
 | Session dies with code 3000                              | Another Zalo Web session or bridge is open. Close it, then `login`.                                                 |
 | `Bridge: NOT running`                                  | `node bin/cli.mjs restart`, or `node bin/cli.mjs setup --service-only` if never installed.                        |

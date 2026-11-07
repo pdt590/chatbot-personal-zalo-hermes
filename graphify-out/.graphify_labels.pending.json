@@ -11,17 +11,16 @@
   "18": "test_adapter.py",
   "19": "PROPOSAL — Rà soát, sửa lỗi và refactor hermes-zalo-plugin (v1.0.12)",
   "20": "CLAUDE.md",
-  "21": "permissions.js",
-  "22": "zaloClient.js",
+  "21": "os",
+  "22": "SendImageTest",
   "23": "TargetTest",
-  "24": "login.mjs",
+  "24": "EmptyImageTagTest",
   "25": "ToolAccessHookTest",
   "26": "StripLeadingNameTest",
   "27": "zalo-tool-access.py",
-  "28": "ThreadTypeTest",
-  "29": ".login",
+  "28": "HomeChannelTest",
   "30": "GroupToolsTest",
   "31": "HeldMediaTest",
-  "37": "Cfg",
-  "38": "SendImageTest"
+  "37": "ReplyFieldsTest",
+  "38": "Cfg"
 }

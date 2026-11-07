@@ -236,6 +236,28 @@ from gateway.platforms.base import (
 from gateway.config import Platform
 
 
+def _env(name: str, default: Optional[str] = None) -> Optional[str]:
+    """Read a ZALO_* setting from the profile this code runs for.
+
+    Hermes runs one gateway per host that serves every profile
+    (gateway.multiplex_profiles). Its os.environ holds only the DEFAULT
+    profile's .env; a named profile's .env lives in a per-profile secret scope.
+    A plain os.getenv would hand a named profile the default profile's bridge
+    URL, allowlists and home channel. get_scoped_secret (what the bundled
+    Telegram adapter uses) reads the active profile's value and falls back to
+    os.environ only for the default profile. Older Hermes: plain os.getenv.
+    """
+    try:
+        from gateway.platforms._shared import get_scoped_secret
+    except Exception:
+        return os.getenv(name, default)
+    try:
+        val = get_scoped_secret(name, None)
+    except Exception:
+        val = os.getenv(name)
+    return default if val is None else str(val)
+
+
 def _truthy(v) -> bool:
     return str(v if v is not None else "").strip().lower() in {"1", "true", "yes", "on"}
 
@@ -299,16 +321,16 @@ class ZaloAdapter(BasePlatformAdapter):
         extra = getattr(config, "extra", {}) or {}
 
         self.bridge_url = (
-            os.getenv("ZALO_PLUGIN_URL") or extra.get("bridge_url", "http://127.0.0.1:8787")
+            _env("ZALO_PLUGIN_URL") or extra.get("bridge_url", "http://127.0.0.1:8787")
         ).rstrip("/")
-        self.bridge_token = os.getenv("ZALO_PLUGIN_TOKEN") or extra.get("bridge_token", "")
+        self.bridge_token = _env("ZALO_PLUGIN_TOKEN") or extra.get("bridge_token", "")
 
         # ── Access control (Telegram-style: empty list = allow everyone) ──────
         # A) ALLOWED_USERS  — uids permitted to command the bot. Empty = all.
         # B) ALLOWED_THREADS — thread/group ids the bot operates in. Empty = all.
         # C) GROUP_MODE     — in groups: "mention" (default) | "all" | "off".
         def _csv_env(name, fallback_key):
-            raw = os.getenv(name)
+            raw = _env(name)
             if raw is not None:
                 return [x.strip() for x in raw.split(",") if x.strip()]
             return [str(x).strip() for x in (extra.get(fallback_key, []) or []) if str(x).strip()]
@@ -320,9 +342,9 @@ class ZaloAdapter(BasePlatformAdapter):
 
         # Group response mode. Back-compat: legacy ZALO_GROUP_REQUIRE_MENTION=false
         # maps to "all"; true/unset maps to "mention".
-        mode = (os.getenv("ZALO_GROUP_MODE") or extra.get("group_mode") or "").strip().lower()
+        mode = (_env("ZALO_GROUP_MODE") or extra.get("group_mode") or "").strip().lower()
         if not mode:
-            legacy = os.getenv("ZALO_GROUP_REQUIRE_MENTION")
+            legacy = _env("ZALO_GROUP_REQUIRE_MENTION")
             if legacy is not None and not _truthy(legacy):
                 mode = "all"
             elif extra.get("group_require_mention") is False:
@@ -338,7 +360,7 @@ class ZaloAdapter(BasePlatformAdapter):
         self.group_triggers = _csv_env("ZALO_GROUP_TRIGGERS", "group_triggers")
         # Where a reply quotes the message it answers: "group" (default; in a
         # busy group it shows who is being answered), "all", or "off".
-        quote_mode = (os.getenv("ZALO_REPLY_QUOTE") or extra.get("reply_quote") or "group").strip().lower()
+        quote_mode = (_env("ZALO_REPLY_QUOTE") or extra.get("reply_quote") or "group").strip().lower()
         self.reply_quote = quote_mode if quote_mode in {"group", "all", "off"} else "group"
 
         # Note: ZALO_ALLOW_ALL_USERS is read by the Hermes gateway itself
@@ -352,7 +374,7 @@ class ZaloAdapter(BasePlatformAdapter):
         # .env out of os.environ.
         owners = _csv_env("ZALO_OWNER_IDS", "owner_ids")
         if not owners:
-            owners = [x.strip() for x in (os.getenv("ZALO_HOOK_OWNERS") or "").split(",") if x.strip()]
+            owners = [x.strip() for x in (_env("ZALO_HOOK_OWNERS") or "").split(",") if x.strip()]
         if not owners:
             admins = extra.get("allow_admin_from") or []
             owners = [str(x).strip() for x in (admins if isinstance(admins, list) else [admins]) if str(x).strip()]
@@ -363,7 +385,7 @@ class ZaloAdapter(BasePlatformAdapter):
         # held (not downloaded yet) and attached to the same sender's next text
         # message in the same chat, if that arrives within this many seconds.
         # 0 restores the old behaviour (reply to the attachment on its own).
-        raw_wait = os.getenv("ZALO_MEDIA_WAIT")
+        raw_wait = _env("ZALO_MEDIA_WAIT")
         if raw_wait is None:
             raw_wait = extra.get("media_wait", 300)
         try:
@@ -374,7 +396,7 @@ class ZaloAdapter(BasePlatformAdapter):
         self._held_media: Dict[tuple, List[tuple]] = {}
 
         # Log inbound uid/threadId to help operators discover ids for allowlists.
-        self.log_ids = _truthy(os.getenv("ZALO_LOG_IDS")) if os.getenv("ZALO_LOG_IDS") else bool(extra.get("log_ids", False))
+        self.log_ids = _truthy(_env("ZALO_LOG_IDS")) if _env("ZALO_LOG_IDS") else bool(extra.get("log_ids", False))
 
         max_msg = extra.get("max_message_length")
         self.max_message_length = int(max_msg or 4000)
@@ -386,7 +408,7 @@ class ZaloAdapter(BasePlatformAdapter):
         self._thread_types: Dict[str, str] = {}
         # Seed from the home channel so cron delivery to "group:<id>" routes
         # correctly even before any inbound message from that group.
-        home_id, home_type = _parse_home_channel(os.getenv("ZALO_HOME_CHANNEL") or "")
+        home_id, home_type = _parse_home_channel(_env("ZALO_HOME_CHANNEL") or "")
         if home_id:
             self._thread_types[home_id] = home_type
         # Ids of every group the account is in, from the bridge. Outbound sends
@@ -648,7 +670,7 @@ class ZaloAdapter(BasePlatformAdapter):
         except Exception:
             pass
         # Best-effort: notify the operator in their home channel if known.
-        home = os.getenv("ZALO_HOME_CHANNEL")
+        home = _env("ZALO_HOME_CHANNEL")
         if home and self._message_handler:
             chat_id, ttype = _parse_home_channel(home)
             if chat_id:
@@ -1251,30 +1273,35 @@ class ZaloAdapter(BasePlatformAdapter):
 # ---------------------------------------------------------------------------
 
 def check_requirements() -> bool:
-    """Zalo needs a bridge URL and aiohttp."""
+    """Dependency probe only (aiohttp importable).
+
+    Hermes calls check_fn as a passive dependency check, and on the shared
+    gateway it may run outside the profile's secret scope; whether the bridge
+    is configured is validate_config's job (it sees the profile's settings).
+    """
     try:
         import aiohttp  # noqa
     except ImportError:
         return False
-    return bool(os.getenv("ZALO_PLUGIN_URL"))
+    return True
 
 
 def validate_config(config) -> bool:
     extra = getattr(config, "extra", {}) or {}
-    return bool(os.getenv("ZALO_PLUGIN_URL") or extra.get("bridge_url"))
+    return bool(_env("ZALO_PLUGIN_URL") or extra.get("bridge_url"))
 
 
 def _env_enablement() -> Optional[dict]:
     """Seed PlatformConfig.extra from env so env-only setups show in status."""
-    bridge_url = os.getenv("ZALO_PLUGIN_URL")
+    bridge_url = _env("ZALO_PLUGIN_URL")
     if not bridge_url:
         return None
     extra = {
         "bridge_url": bridge_url.rstrip("/"),
-        "bridge_token": os.getenv("ZALO_PLUGIN_TOKEN", ""),
+        "bridge_token": _env("ZALO_PLUGIN_TOKEN", ""),
     }
     result: Dict[str, Any] = {"extra": extra}
-    home = os.getenv("ZALO_HOME_CHANNEL")
+    home = _env("ZALO_HOME_CHANNEL")
     if home:
         chat_id, thread_type = _parse_home_channel(home)
         if chat_id:
@@ -1368,10 +1395,10 @@ def _fetch_contacts(bridge_url: str, token: str) -> Optional[Dict[str, Any]]:
 
 def _bridge_env_path() -> str:
     """Where the bridge reads its own settings (mirrors paths.js bridgeEnvPath)."""
-    explicit = os.getenv("ZALO_BRIDGE_ENV")
+    explicit = _env("ZALO_BRIDGE_ENV")
     if explicit:
         return explicit
-    data_dir = os.getenv("ZALO_DATA_DIR") or os.path.join(os.path.expanduser("~"), ".hermes-zalo")
+    data_dir = _env("ZALO_DATA_DIR") or os.path.join(os.path.expanduser("~"), ".hermes-zalo")
     return os.path.join(os.path.abspath(data_dir), "bridge.env")
 
 
@@ -1526,7 +1553,7 @@ def interactive_setup() -> None:
     #   2) LOGGED OUT    → session expired: offer to QR-login right now
     #   3) OK            → auto-list contacts for number-pick
     bridge = bridge_url.strip().rstrip("/")
-    token = get_env_value("ZALO_PLUGIN_TOKEN") or os.getenv("ZALO_PLUGIN_TOKEN", "")
+    token = get_env_value("ZALO_PLUGIN_TOKEN") or _env("ZALO_PLUGIN_TOKEN", "")
     cli = _bridge_cli_hint()
     health = _probe_health(bridge, token)
 
@@ -1841,10 +1868,10 @@ def _bridge_get(path: str, params: Optional[Dict[str, Any]] = None) -> Dict[str,
     import urllib.error
     import urllib.parse
     import urllib.request
-    base = (os.getenv("ZALO_PLUGIN_URL") or "http://127.0.0.1:8787").rstrip("/")
+    base = (_env("ZALO_PLUGIN_URL") or "http://127.0.0.1:8787").rstrip("/")
     url = f"{base}{path}" + (f"?{urllib.parse.urlencode(params)}" if params else "")
     req = urllib.request.Request(url)
-    token = os.getenv("ZALO_PLUGIN_TOKEN")
+    token = _env("ZALO_PLUGIN_TOKEN")
     if token:
         req.add_header("x-bridge-token", token)
     try:
@@ -1981,14 +2008,14 @@ _GROUP_TOOLS = (
 
 def is_connected() -> bool:
     """Lightweight check used by `hermes gateway status` (env-only)."""
-    return bool(os.getenv("ZALO_PLUGIN_URL"))
+    return bool(_env("ZALO_PLUGIN_URL"))
 
 
 def register(ctx):
     """Plugin entry point: called by the Hermes plugin system."""
     for name, schema, handler, emoji in _GROUP_TOOLS:
         ctx.register_tool(name=name, toolset="zalo_groups", schema=schema, handler=handler,
-                          check_fn=lambda: bool(os.getenv("ZALO_PLUGIN_URL")), emoji=emoji)
+                          check_fn=lambda: bool(_env("ZALO_PLUGIN_URL")), emoji=emoji)
     ctx.register_platform(
         name="zalo",
         label="Zalo",

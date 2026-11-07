@@ -535,5 +535,50 @@ class BridgeCliTest(unittest.TestCase):
                 self.assertFalse(adapter._run_bridge_cli("status"))
 
 
+class ScopedEnvTest(unittest.TestCase):
+    """One gateway serves every profile: settings come from the active profile's
+    secret scope (get_scoped_secret), not the default profile's os.environ."""
+
+    def setUp(self):
+        self.shared = types.ModuleType("gateway.platforms._shared")
+        self.scope = {}
+        self.shared.get_scoped_secret = lambda name, default=None: self.scope.get(name, default)
+        sys.modules["gateway.platforms._shared"] = self.shared
+        self._saved = {k: os.environ.pop(k, None) for k in ("ZALO_PLUGIN_URL", "ZALO_ALLOWED_USERS")}
+        os.environ["ZALO_PLUGIN_URL"] = "http://default:1"
+        os.environ["ZALO_ALLOWED_USERS"] = "999"
+
+    def tearDown(self):
+        sys.modules.pop("gateway.platforms._shared", None)
+        for k, v in self._saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    def test_profile_scope_wins_over_process_env(self):
+        self.scope.update({"ZALO_PLUGIN_URL": "http://lily:2/", "ZALO_ALLOWED_USERS": "1,2"})
+        a = adapter.ZaloAdapter(Cfg())
+        self.assertEqual(a.bridge_url, "http://lily:2")
+        self.assertEqual(a.allowed_users, ["1", "2"])
+
+    def test_scoped_miss_does_not_borrow_default_profile_env(self):
+        a = adapter.ZaloAdapter(Cfg())
+        self.assertEqual(a.allowed_users, [])
+        self.assertFalse(adapter.validate_config(Cfg()))
+
+    def test_without_scoped_reader_falls_back_to_os_environ(self):
+        sys.modules.pop("gateway.platforms._shared", None)
+        self.assertEqual(adapter._env("ZALO_PLUGIN_URL"), "http://default:1")
+
+    def test_check_fn_is_a_dependency_probe_only(self):
+        # The shared gateway may call check_fn outside the profile scope.
+        try:
+            import aiohttp  # noqa: F401
+        except ImportError:
+            self.skipTest("aiohttp not installed")
+        self.assertTrue(adapter.check_requirements())
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -28,6 +28,7 @@ và Windows.
    - [Biến môi trường trình cài đặt đọc](#biến-môi-trường-trình-cài-đặt-đọc)
    - [Ví dụ cài đặt](#ví-dụ-cài-đặt)
    - [Vị trí các thành phần đã cài](#vị-trí-các-thành-phần-đã-cài)
+   - [Chỉ dùng Zalo ở một profile có tên (một gateway chung)](#chỉ-dùng-zalo-ở-một-profile-có-tên-một-gateway-chung)
 4. [Cấu hình](#cấu-hình)
 5. [Bảo mật](#bảo-mật)
    - [Hook kiểm soát tool (tuỳ chọn)](#hook-kiểm-soát-tool-tuỳ-chọn)
@@ -62,7 +63,7 @@ node bin/cli.mjs setup --profile <name>
 
 # 3. Kết nối với Hermes (thêm -p <name> nếu dùng profile có tên).
 hermes gateway setup                 # chọn "Zalo": người dùng, nhóm, quyền
-hermes gateway                       # bắt đầu chat
+hermes gateway restart               # một gateway chung phục vụ mọi profile
 ```
 
 Phần còn lại giải thích từng tuỳ chọn. Nếu mặc định đã phù hợp thì bạn đã xong.
@@ -102,6 +103,7 @@ file adapter được ghi đè.
 | 2      | Đăng nhập Zalo bằng QR (dùng lại phiên đã lưu nếu còn chạy).                                                                                                                               | `--service-only`                                               |
 | 3      | Đăng ký bridge thành service chạy nền: systemd user unit (Linux), launchd agent (macOS), Scheduled Task khi đăng nhập (Windows).                                                               | `--no-service`                                                 |
 | 4      | Chép adapter Python vào `<profile>/plugins/zalo`, thêm `zalo-platform` vào `plugins.enabled` và toolset của plugin vào `platform_toolsets.zalo` trong `<profile>/config.yaml`.         | không có profile mặc định                                   |
+| 4b     | Chỉ khi cài adapter vào profile có tên mà không có `default`: chép cùng adapter vào `~/.hermes/plugins/zalo` (nơi chạy [gateway chung](#chỉ-dùng-zalo-ở-một-profile-có-tên-một-gateway-chung)), thêm `zalo-platform` ở đó, và đặt `platforms.zalo.enabled: false` trong `~/.hermes/config.yaml` nếu khoá này chưa có. | `default` nằm trong các profile được chọn |
 | 5      | Tuỳ chọn [hook kiểm soát tool](#hook-kiểm-soát-tool-tuỳ-chọn): chép vào `<profile>/agent-hooks/`, đăng ký trong `hooks.pre_tool_call`, ghi cấu hình chủ bot vào `<profile>/.env`. | chỉ chạy khi có tuỳ chọn hook, hoặc hook đã được cài |
 
 `<profile>` là thư mục của profile Hermes được chọn.
@@ -120,11 +122,11 @@ thư mục theo đúng cách `hermes -p <name>` làm:
 
 Nơi cài được lấy từ nguồn đầu tiên có giá trị:
 
-| # | Nguồn                               | Ví dụ                                            | Ghi chú                                                          |
-| - | ------------------------------------ | -------------------------------------------------- | ----------------------------------------------------------------- |
-| 1 | `--profile <name>` / `-p <name>` | `--profile work`, `-p=work`                    | Nên dùng.                                                       |
-| 2 | `--hermes-home <path>`             | `--hermes-home /srv/hermes/work`                 | Thư mục cụ thể. Không dùng chung với `--profile`.        |
-| 3 | không có gì                       | `node bin/cli.mjs setup`                         | Profile `default`, **chỉ khi thư mục đã tồn tại**. |
+| # | Nguồn                               | Ví dụ                            | Ghi chú                                                          |
+| - | ------------------------------------ | ---------------------------------- | ----------------------------------------------------------------- |
+| 1 | `--profile <name>` / `-p <name>` | `--profile work`, `-p=work`    | Nên dùng.                                                       |
+| 2 | `--hermes-home <path>`             | `--hermes-home /srv/hermes/work` | Thư mục cụ thể. Không dùng chung với `--profile`.        |
+| 3 | không có gì                       | `node bin/cli.mjs setup`         | Profile `default`, **chỉ khi thư mục đã tồn tại**. |
 
 Quy tắc:
 
@@ -167,11 +169,11 @@ Giá trị có thể viết `--tuỳ-chọn giá-trị` hoặc `--tuỳ-chọn=g
 
 ### Biến môi trường trình cài đặt đọc
 
-| Biến                                                                                                   | Tác dụng                                                                                                       |
-| ------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `ZALO_DATA_DIR`                                                                                       | Thư mục dữ liệu bridge (đăng nhập, `bridge.env`, log). Mặc định `~/.hermes-zalo`.                  |
-| `ZALO_BRIDGE_ENV`, `ZALO_CREDENTIALS_PATH`, `ZALO_QR_PATH`, `ZALO_CLIMSG_DIR`, `ZALO_LOG_DIR` | Đổi riêng từng file hoặc thư mục của bridge.                                                             |
-| `ZALO_PLUGIN_PORT`                                                                                    | Chỉ đổi URL in ra ở cuối; bridge đọc cổng từ `bridge.env`.                                            |
+| Biến                                                                                                   | Tác dụng                                                                                      |
+| ------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `ZALO_DATA_DIR`                                                                                       | Thư mục dữ liệu bridge (đăng nhập, `bridge.env`, log). Mặc định `~/.hermes-zalo`. |
+| `ZALO_BRIDGE_ENV`, `ZALO_CREDENTIALS_PATH`, `ZALO_QR_PATH`, `ZALO_CLIMSG_DIR`, `ZALO_LOG_DIR` | Đổi riêng từng file hoặc thư mục của bridge.                                            |
+| `ZALO_PLUGIN_PORT`                                                                                    | Chỉ đổi URL in ra ở cuối; bridge đọc cổng từ `bridge.env`.                           |
 
 Các biến đường dẫn `ZALO_*` dùng lúc cài được ghi vào định nghĩa service, nên bridge
 chạy nền dùng đúng các vị trí đó. Hãy đặt lại chúng mỗi lần chạy lại (và khi gỡ cài
@@ -235,12 +237,46 @@ node bin/cli.mjs setup --profile work
 Mỗi máy có **một bridge** (một tài khoản Zalo), dùng chung cho mọi profile; mỗi
 profile có **bản adapter riêng**.
 
+### Chỉ dùng Zalo ở một profile có tên (một gateway chung)
+
+Hermes hiện chạy **một gateway cho mỗi máy** (`gateway.multiplex_profiles`): gateway
+của profile mặc định phục vụ mọi profile, và `hermes -p <name> gateway install/start`
+từ chối mở gateway thứ hai. Vì vậy adapter Zalo của profile có tên chạy **bên trong
+process của profile mặc định**. Trình cài đặt tự lo những việc cần thiết:
+
+| Ở đâu                   | Cái gì                                                                                 | Lý do                                                                                                                                                                                                                 |
+| ----------------------- | -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `profiles/<name>/`      | adapter, `zalo-platform` bật, `ZALO_*` trong `.env` (do `hermes -p <name> gateway setup` ghi) | Cấu hình Zalo riêng của profile: URL bridge, danh sách được phép, chủ bot, home channel, hook. Adapter đọc chúng từ `.env` **của chính profile này** (secret scope theo profile của Hermes, giống adapter Telegram có sẵn), không bao giờ từ `~/.hermes/.env`. |
+| `~/.hermes/` (mặc định) | bản host: `plugins/zalo/` + `zalo-platform` trong `plugins.enabled`                     | Gateway chung khôi phục các route hội thoại đã lưu của mọi profile lúc khởi động, trước khi plugin của profile có tên được nạp. Thiếu plugin ở đây, mọi route Zalo bị bỏ qua (`'zalo' is not a valid Platform`) và bot mở session mới ở từng cuộc chat sau mỗi lần restart. |
+| `~/.hermes/config.yaml` | `platforms.zalo.enabled: false`                                                         | Profile mặc định nạp plugin nhưng không tự kết nối bridge. Một bridge là một tài khoản Zalo: hai profile cùng dùng thì cả hai đều trả lời.                                                                          |
+
+Các bước:
+
+```bash
+node bin/cli.mjs setup --profile lily   # lily + bản host trong ~/.hermes
+hermes -p lily gateway setup            # chọn "Zalo": ghi .env của lily
+hermes gateway restart                  # gateway chung, cho mọi profile
+grep -i zalo ~/.hermes/logs/gateway.log | tail -3
+```
+
+Khi chạy đúng, log có `✓ zalo connected (profile: lily)`, không có cảnh báo
+`'zalo' is not a valid Platform`, và không có dòng `✓ zalo connected` nào thiếu
+`(profile: …)` (dòng đó nghĩa là profile mặc định cũng đang kết nối).
+
+Nếu trước đây Zalo được cài ở profile mặc định, việc thêm profile có tên sẽ tắt Zalo
+ở mặc định (trình cài đặt có báo). Muốn giữ Zalo ở profile mặc định, đặt
+`platforms.zalo.enabled: true` trong `~/.hermes/config.yaml` rồi gỡ khỏi profile có
+tên. Bản hướng dẫn cũ yêu cầu chép `ZALO_*` sang `~/.hermes/.env`; giờ không cần
+nữa, có thể xoá các dòng đó khi đã có `platforms.zalo.enabled: false`.
+
 ## Cấu hình
 
 `hermes gateway setup` (`hermes -p <name> gateway setup` với profile có tên) ghi cả
 hai file dưới đây.
 
-**Adapter:** `<profile>/.env`. Khởi động lại `hermes gateway` sau khi sửa.
+**Adapter:** `<profile>/.env`. Sau khi sửa, khởi động lại gateway chung:
+`hermes -p <name> gateway restart` chỉ kết nối lại profile đó;
+`hermes gateway restart` khởi động lại gateway duy nhất cho mọi profile.
 
 | Biến                    | Mặc định                                     | Ý nghĩa                                                                                                      |
 | ------------------------ | ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
@@ -413,7 +449,7 @@ của Zalo (2000 ký tự, 40 kiểu chữ).
 ```bash
 git pull && npm install
 node bin/cli.mjs setup --service-only --profile <name>[,<name>…]  # mọi profile có adapter
-hermes -p <name> gateway restart                # profile mặc định: hermes gateway restart
+hermes gateway restart                          # mã adapter mới cần khởi động lại gateway chung
 ```
 
 Bỏ `--profile` nếu dùng profile mặc định. Nếu lúc cài có dùng biến đường dẫn
@@ -427,13 +463,14 @@ Chạy từ bản git clone, trên mọi hệ điều hành: `node bin/cli.mjs u
 
 ### Tuỳ chọn gỡ cài đặt
 
-| Tuỳ chọn / biến                           | Giá trị           | Tác dụng                                                                                             |
-| -------------------------------------------- | ------------------- | ------------------------------------------------------------------------------------------------------ |
-| `-p`, `--profile`                        | tên profile        | Gỡ adapter và hook khỏi các profile này (cách nhau bằng dấu phẩy). Quy tắc giống lúc cài. |
-| `--hermes-home`                            | thư mục           | Gỡ khỏi thư mục này.                                                                              |
-| `--purge`                                  | —                  | Xoá cả đăng nhập Zalo đã lưu (`credentials.json`). Lần cài sau sẽ hiện QR.               |
-| `--hook-only`                              | —                  | **Chỉ** gỡ hook kiểm soát tool; giữ service, adapter và đăng nhập. Không dùng chung với `--purge`. |
-| `ZALO_DATA_DIR`, `ZALO_CREDENTIALS_PATH` | biến môi trường | Nơi tìm đăng nhập nếu bạn đã đổi vị trí.                                                  |
+| Tuỳ chọn / biến                           | Giá trị           | Tác dụng                                                                                                             |
+| -------------------------------------------- | ------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| *(không có)*                                 | —                  | Gỡ Zalo **ở mọi nơi**: adapter của mọi profile đang có, và service.                                                 |
+| `-p`, `--profile`                        | tên profile        | Chỉ gỡ adapter và hook khỏi các profile này (cách nhau bằng dấu phẩy). Quy tắc giống lúc cài.            |
+| `--hermes-home`                            | thư mục           | Gỡ khỏi thư mục này.                                                                                              |
+| `--purge`                                  | —                  | Xoá cả đăng nhập Zalo đã lưu (`credentials.json`). Lần cài sau sẽ hiện QR. Bị từ chối khi còn profile khác dùng Zalo. |
+| `--hook-only`                              | —                  | **Chỉ** gỡ hook kiểm soát tool; giữ service, adapter và đăng nhập. Không dùng chung với `--purge`. Không có `--profile`: profile mặc định. |
+| `ZALO_DATA_DIR`, `ZALO_CREDENTIALS_PATH` | biến môi trường | Nơi tìm đăng nhập nếu bạn đã đổi vị trí.                                                                  |
 
 Khác với lúc cài, profile không tồn tại không phải lỗi: trình gỡ báo không có gì
 để gỡ ở đó rồi làm tiếp.
@@ -442,36 +479,38 @@ Khác với lúc cài, profile không tồn tại không phải lỗi: trình g�
 
 | Bị gỡ                                                                    | Được giữ                                                              |
 | -------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| Service chạy nền (dừng và huỷ đăng ký)                             | Mã bridge (bản git clone)                                               |
-| `<profile>/plugins/zalo/`                                                | `~/.hermes-zalo/` (`bridge.env`, log, cache)                          |
-| `zalo-platform` trong `plugins.enabled` của `<profile>/config.yaml` | Đăng nhập Zalo, trừ khi có `--purge`                               |
+| `<profile>/plugins/zalo/`                                                | Mã bridge (bản git clone)                                               |
+| `zalo-platform` trong `plugins.enabled` của `<profile>/config.yaml` | `~/.hermes-zalo/` (`bridge.env`, log, cache)                          |
+| `platforms.zalo.enabled: false` (do trình cài đặt ghi)              | Đăng nhập Zalo, trừ khi có `--purge`                               |
 | File hook và mục `hooks.pre_tool_call` của nó                        | Các dòng `ZALO_*` trong `<profile>/.env` (dùng lại khi cài lại) |
-|                                                                            | `platform_toolsets.zalo` và phần còn lại của `config.yaml`       |
+| Service chạy nền, **khi không còn profile nào dùng Zalo**            | `platform_toolsets.zalo` và phần còn lại của `config.yaml`       |
 
-Gỡ cài đặt luôn gỡ **service** cùng với adapter của profile được chọn. Muốn gỡ Zalo
-khỏi một profile nhưng giữ ở profile khác, hãy gỡ rồi cài lại cho profile cần giữ:
+Bridge và bản host trong profile mặc định là dùng chung, nên trình gỡ giữ chúng lại
+khi còn profile khác cần:
 
-```bash
-node bin/cli.mjs uninstall --profile work
-node bin/cli.mjs setup --service-only --profile lily
-```
+- `uninstall --profile work` khi `lily` vẫn dùng Zalo: gỡ adapter của `work`, giữ
+  service và bản host trong `~/.hermes`.
+- `uninstall --profile lily` cho profile có tên cuối cùng: gỡ luôn bản host trong
+  `~/.hermes` (chỉ khi Zalo đang tắt ở đó) và service.
+- `uninstall --profile default` khi còn profile có tên dùng Zalo: giữ adapter trong
+  `~/.hermes` (gateway chung cần nó), chỉ đặt `platforms.zalo.enabled: false` để
+  profile mặc định ngừng trả lời.
 
 ### Ví dụ gỡ cài đặt
 
 ```bash
-node bin/cli.mjs uninstall                      # profile mặc định, giữ đăng nhập
-node bin/cli.mjs uninstall --profile work       # profile có tên
-node bin/cli.mjs uninstall --profile work --purge  # đăng xuất luôn (xoá credentials)
+node bin/cli.mjs uninstall                      # gỡ mọi thứ, giữ đăng nhập
+node bin/cli.mjs uninstall --purge              # gỡ mọi thứ và đăng xuất
+node bin/cli.mjs uninstall --profile work       # một profile có tên; các profile khác vẫn giữ Zalo
 node bin/cli.mjs uninstall --profile work --hook-only  # chỉ gỡ hook kiểm soát tool
 
 # Gỡ sạch hoàn toàn
-node bin/cli.mjs uninstall --profile work,lily --purge  # mọi profile từng có adapter
+node bin/cli.mjs uninstall --purge
 rm -rf ~/.hermes-zalo                           # dữ liệu bridge
 rm -rf /đường/dẫn/tới/bản/git/clone            # mã bridge
-hermes -p work gateway restart
 ```
 
-Sau đó khởi động lại `hermes gateway` của từng profile bị ảnh hưởng.
+Sau đó khởi động lại gateway chung: `hermes gateway restart`.
 
 ## Lệnh CLI
 
@@ -515,6 +554,9 @@ Bridge lắng nghe ở `127.0.0.1:8787`. Nếu có token, gửi qua header `x-br
 | `use either --profile or --hermes-home, not both`           | Chỉ giữ một trong hai.                                                                                          |
 | `Hermes home not found at …/.hermes`, bỏ qua adapter      | Chưa có profile mặc định. Truyền `--profile <name>`, hoặc cài Hermes rồi chạy lại `--service-only`. |
 | Không thấy Zalo trong `hermes gateway setup`              | Adapter đã vào profile khác: xem dòng `Hermes profile: …` và chạy lại với đúng `--profile`.        |
+| `[MULTIPLEX] Profile '<name>': … adapter creation returned None` | Thiếu `ZALO_PLUGIN_URL` trong `~/.hermes/.env`. Xem [Chỉ dùng Zalo ở một profile có tên](#chỉ-dùng-zalo-ở-một-profile-có-tên-một-gateway-chung). |
+| `Skipping invalid … entry 'agent:<name>:zalo:…': 'zalo' is not a valid Platform` | Profile mặc định không nạp plugin: thêm `plugins/zalo` và `zalo-platform` vào `~/.hermes` (`setup --service-only --profile default`). |
+| Có `✓ zalo connected` không kèm `(profile: …)` bên cạnh dòng của profile có tên | Profile mặc định cũng đang kết nối. Đặt `platforms.zalo.enabled: false` trong `~/.hermes/config.yaml`, rồi `hermes gateway restart`. |
 | `loggedIn=false` hoặc `sessionDead`                      | `node bin/cli.mjs login`; nếu cookie đã hỏng, `node bin/cli.mjs setup --relogin`.                          |
 | Phiên bị ngắt với mã 3000                                | Đang mở Zalo Web hoặc bridge khác. Đóng nó, rồi `login`.                                                 |
 | `Bridge: NOT running`                                       | `node bin/cli.mjs restart`, hoặc `node bin/cli.mjs setup --service-only` nếu chưa từng cài service.       |
