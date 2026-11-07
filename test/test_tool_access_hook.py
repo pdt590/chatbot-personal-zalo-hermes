@@ -25,8 +25,9 @@ class ToolAccessHookTest(unittest.TestCase):
         con = sqlite3.connect(self.home / "state.db")
         con.execute("create table sessions (id text primary key, source text, user_id text, chat_type text)")
         con.executemany("insert into sessions values (?,?,?,?)", [
-            ("s-owner", "zalo", OWNER, "dm"), ("s-owner-group", "zalo", OWNER, "group"),
-            ("s-stranger", "zalo", STRANGER, "dm"), ("s-cli", "cli", "uid:1000", None)])
+            ("s-owner", "zalo-person", OWNER, "dm"), ("s-owner-group", "zalo-person", OWNER, "group"),
+            ("s-stranger", "zalo-person", STRANGER, "dm"), ("s-cli", "cli", "uid:1000", None),
+            ("s-legacy", "zalo", STRANGER, "dm")])
         con.commit()
         con.close()
 
@@ -93,7 +94,10 @@ class ToolAccessHookTest(unittest.TestCase):
         self.assertIsNone(self.run_hook({"tool_name": "terminal", "session_id": "nope"},
                                         env={"HERMES_SESSION_PLATFORM": "cli"}))
         self.assertBlocked(self.run_hook({"tool_name": "terminal"}, env={
-            "HERMES_SESSION_PLATFORM": "zalo", "HERMES_SESSION_USER_ID": STRANGER}))
+            "HERMES_SESSION_PLATFORM": "zalo-person", "HERMES_SESSION_USER_ID": STRANGER}))
+
+    def test_legacy_zalo_source_stays_restricted(self):
+        self.assertBlocked(self.run_hook({"tool_name": "terminal", "session_id": "s-legacy"}))
 
     def test_fail_closed_on_bad_input_and_args(self):
         self.assertBlocked(self.run_hook("garbage"))
@@ -121,7 +125,7 @@ class ToolAccessHookTest(unittest.TestCase):
                                          "tool_input": {"path": "/tmp"}}, *args))
         self.assertBlocked(self.run_hook({"tool_name": "terminal", "session_id": "s-stranger"}, *args))
         self.assertBlocked(self.run_hook({"tool_name": "terminal"}, *args, env={
-            "HERMES_SESSION_PLATFORM": "zalo", "HERMES_SESSION_USER_ID": OWNER}))
+            "HERMES_SESSION_PLATFORM": "zalo-person", "HERMES_SESSION_USER_ID": OWNER}))
 
     def test_owner_mode_full_and_bad_mode(self):
         self.assertIsNone(self.run_hook({"tool_name": "terminal", "session_id": "s-owner-group"},

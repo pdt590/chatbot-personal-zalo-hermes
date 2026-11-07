@@ -264,10 +264,17 @@ export function setEnvVar(envText, key, value) {
 // ── plugins.enabled: enable / disable the Zalo adapter plugin ───────────────
 // Line-based edits (no YAML dependency) of the one list we need.
 
-export const PLUGIN_NAME = "zalo-platform";
+/** One name for everything: plugin.yaml `name:`, the plugins/<dir> and the Hermes platform. */
+export const PLUGIN_NAME = "zalo-person";
+export const PLATFORM_NAME = PLUGIN_NAME;
+export const PLUGIN_DIR = PLUGIN_NAME;
+/** Older installs: plugin "zalo-platform" in plugins/zalo, registering platform "zalo". */
+export const LEGACY_PLUGIN_NAME = "zalo-platform";
+export const LEGACY_PLATFORM_NAME = "zalo";
+export const LEGACY_PLUGIN_DIR = "zalo";
 
 /**
- * Ensure plugins.enabled contains "zalo-platform" (inline or block list).
+ * Ensure plugins.enabled contains "zalo-person" (inline or block list).
  * Returns { text, status: "already" | "added" | "created" }.
  */
 export function enablePluginInConfig(cfgText) {
@@ -312,11 +319,11 @@ export function enablePluginInConfig(cfgText) {
 }
 
 /**
- * Drop "zalo-platform" from plugins.enabled (inline or block list). An emptied
+ * Drop the plugin (default PLUGIN_NAME) from plugins.enabled (inline or block list). An emptied
  * `enabled:` (and then an emptied `plugins:`) is removed too.
  * Returns { text, removed }.
  */
-export function disablePluginInConfig(cfgText) {
+export function disablePluginInConfig(cfgText, name = PLUGIN_NAME) {
   const text = cfgText || "";
   const lines = text.split("\n");
   const pluginsIdx = lines.findIndex((l) => /^plugins:\s*$/.test(l));
@@ -327,7 +334,7 @@ export function disablePluginInConfig(cfgText) {
   const inline = lines[enabledIdx].match(/^(\s*enabled:\s*)\[(.*)\]\s*$/);
   if (inline) {
     const items = inline[2].split(",").map((s) => s.trim()).filter(Boolean);
-    const kept = items.filter((s) => s.replace(/^['"]|['"]$/g, "") !== PLUGIN_NAME);
+    const kept = items.filter((s) => s.replace(/^['"]|['"]$/g, "") !== name);
     if (kept.length === items.length) return { text, removed: false };
     lines[enabledIdx] = `${inline[1]}[${kept.join(", ")}]`;
     pruneEmptyKeys(lines, enabledIdx);
@@ -335,7 +342,7 @@ export function disablePluginInConfig(cfgText) {
   }
 
   for (let j = enabledIdx + 1; j < lines.length; j++) {
-    if (new RegExp(`^\\s*-\\s*['"]?${PLUGIN_NAME}['"]?\\s*$`).test(lines[j])) {
+    if (new RegExp(`^\\s*-\\s*['"]?${name}['"]?\\s*$`).test(lines[j])) {
       lines.splice(j, 1);
       pruneEmptyKeys(lines, enabledIdx);
       return { text: lines.join("\n"), removed: true };
@@ -429,6 +436,35 @@ export function removePlatformDisabled(cfgText, platform) {
   lines.splice(k.enabled, 1);
   pruneEmptyKeys(lines, k.key);
   return { text: lines.join("\n"), removed: true };
+}
+
+/**
+ * Rename the direct child `<from>:` of the top-level `<section>:` to `<to>:`
+ * (e.g. platforms.zalo -> platforms.zalo-person), keeping its value and body.
+ * Left alone when `<to>:` already exists there.
+ * @returns {{ text: string, status: "absent"|"renamed"|"conflict" }}
+ */
+export function renameSectionKey(cfgText, section, from, to) {
+  const text = String(cfgText || "");
+  const lines = text.split("\n");
+  const top = lines.findIndex((l) => new RegExp(`^${section}:\\s*(#.*)?$`).test(l));
+  if (top === -1) return { text, status: "absent" };
+  const end = blockEnd(lines, top);
+  const keyRe = (name) => new RegExp(`^(\\s+)(["']?)${name}\\2(:.*)$`);
+  let childIndent = -1;
+  let fromIdx = -1;
+  let hasTo = false;
+  for (let i = top + 1; i < end; i++) {
+    if (isBlank(lines[i])) continue;
+    if (childIndent === -1) childIndent = indentOf(lines[i]);
+    if (indentOf(lines[i]) !== childIndent) continue;
+    if (keyRe(from).test(lines[i])) fromIdx = i;
+    else if (keyRe(to).test(lines[i])) hasTo = true;
+  }
+  if (fromIdx === -1) return { text, status: "absent" };
+  if (hasTo) return { text, status: "conflict" };
+  lines[fromIdx] = lines[fromIdx].replace(keyRe(from), (_, ind, q, rest) => `${ind}${q}${to}${q}${rest}`);
+  return { text: lines.join("\n"), status: "renamed" };
 }
 
 // Index of "enabled:" inside the top-level plugins: block, or -1.

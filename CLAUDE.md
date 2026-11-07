@@ -19,7 +19,7 @@ You may use the Zalo account **Hubplus** (logged in on chat.zalo.me in the openc
    node bin/cli.mjs setup --service-only --profile zalo8806  # restart bridge service + copy plugin into Lily's profile only
    systemctl --user restart hermes-gateway.service
    node bin/cli.mjs status            # expect loggedIn=true ownName=Lily
-   grep -i zalo ~/.hermes/logs/gateway.log | tail -2   # expect "✓ zalo connected (profile: zalo8806)"
+   grep -i zalo ~/.hermes/logs/gateway.log | tail -2   # expect "✓ zalo-person connected (profile: zalo8806)"
    ```
 2. Open the chat (`opencli doctor` must report `extensionConnected:true`):
    ```bash

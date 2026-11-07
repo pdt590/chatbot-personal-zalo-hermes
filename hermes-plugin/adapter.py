@@ -277,7 +277,7 @@ def _split_target(raw) -> tuple[str, Optional[str]]:
 
 
 def _parse_target_ref(target_ref: str):
-    """Hermes target parser: lets `zalo:group:<id>` reach the adapter as
+    """Hermes target parser: lets `zalo-person:group:<id>` reach the adapter as
     chat_id=<id>. The type itself is re-derived by the adapter from the
     account's group list, since Hermes passes no thread type."""
     chat_id, _ = _split_target(target_ref)
@@ -311,11 +311,15 @@ def _parse_home_channel(raw: str) -> tuple[str, str]:
     return raw, "user"
 
 
+# One name for the plugin (plugin.yaml), its plugins/<dir> and the platform.
+PLATFORM_NAME = "zalo-person"
+
+
 class ZaloAdapter(BasePlatformAdapter):
     """Zalo adapter that talks to a zca-js bridge over HTTP/SSE."""
 
     def __init__(self, config, **kwargs):
-        platform = Platform("zalo")
+        platform = Platform(PLATFORM_NAME)
         super().__init__(config=config, platform=platform)
 
         extra = getattr(config, "extra", {}) or {}
@@ -1563,7 +1567,7 @@ def interactive_setup() -> None:
         print_warning(f"Bridge không phản hồi tại {bridge} (service đang tắt hoặc chưa khởi động).")
         print_info("Phiên đăng nhập (credentials) vẫn được giữ — chỉ cần bật lại service, KHÔNG cần quét QR lại.")
         if prompt_yes_no("Bật lại background service ngay bây giờ?", True):
-            # Re-install into THIS profile (<home>/plugins/zalo/adapter.py).
+            # Re-install into THIS profile (<home>/plugins/zalo-person/adapter.py).
             home = str(Path(__file__).resolve().parents[2])
             if not _run_bridge_cli("setup", "--service-only", "--hermes-home", home):
                 print_warning("Không tự bật được service.")
@@ -1892,7 +1896,7 @@ def _current_zalo_group() -> Optional[str]:
         from gateway.session_context import get_session_env
     except Exception:
         get_session_env = lambda name, default="": os.getenv(name, default)  # noqa: E731
-    if get_session_env("HERMES_SESSION_PLATFORM", "") != "zalo":
+    if get_session_env("HERMES_SESSION_PLATFORM", "") != PLATFORM_NAME:
         return None
     if get_session_env("HERMES_SESSION_CHAT_TYPE", "") != "group":
         return None
@@ -2017,7 +2021,7 @@ def register(ctx):
         ctx.register_tool(name=name, toolset="zalo_groups", schema=schema, handler=handler,
                           check_fn=lambda: bool(_env("ZALO_PLUGIN_URL")), emoji=emoji)
     ctx.register_platform(
-        name="zalo",
+        name=PLATFORM_NAME,
         label="Zalo",
         adapter_factory=lambda cfg: ZaloAdapter(cfg),
         check_fn=check_requirements,

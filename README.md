@@ -74,7 +74,7 @@ done.
 ```mermaid
 flowchart LR
   Z[Zalo servers] <-- "WebSocket in<br/>HTTPS out" --> B["Bridge (Node + zca-js)<br/>background service"]
-  B -- "SSE  GET /events" --> A["Hermes adapter (Python)<br/>~/.hermes[/profiles/name]/plugins/zalo"]
+  B -- "SSE  GET /events" --> A["Hermes adapter (Python)<br/>~/.hermes[/profiles/name]/plugins/zalo-person"]
   A -- "REST  POST /send, /api/…" --> B
   A <--> H[Hermes gateway + agent]
 ```
@@ -82,7 +82,7 @@ flowchart LR
 | Part                                                | Runs as                                                                             | Job                                                                                                                                 |
 | --------------------------------------------------- | ----------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
 | **Bridge** (`server.js`, `zaloClient.js`) | systemd user unit (Linux), launchd agent (macOS), Scheduled Task at logon (Windows) | Keeps the Zalo session alive, streams inbound events over SSE, exposes REST routes for every zca-js method behind an action policy. |
-| **Adapter** (`hermes-plugin/`)              | Plugin `zalo-platform` inside `hermes gateway`                                  | Turns events into Hermes messages, downloads media, decides which chats to answer, sends replies through the bridge.                |
+| **Adapter** (`hermes-plugin/`)              | Plugin `zalo-person` inside `hermes gateway`                                  | Turns events into Hermes messages, downloads media, decides which chats to answer, sends replies through the bridge.                |
 
 ## Install
 
@@ -104,8 +104,8 @@ overwritten.
 | 1    | `npm install` if `node_modules/zca-js` is missing (needs `npm` on PATH).                                                                                                               | `--service-only`                                                  |
 | 2    | Zalo QR login (reuses the saved session if it still works).                                                                                                                                  | `--service-only`                                                  |
 | 3    | Registers the bridge as a background service: systemd user unit (Linux), launchd agent (macOS), Scheduled Task at logon (Windows).                                                           | `--no-service`                                                    |
-| 4    | Copies the Python adapter into `<profile>/plugins/zalo`, adds `zalo-platform` to `plugins.enabled` and the plugin toolsets to `platform_toolsets.zalo` in `<profile>/config.yaml`. | default profile missing                                             |
-| 4b   | Only when the adapter goes into named profiles but not `default`: copies the same adapter into `~/.hermes/plugins/zalo` (host of the [shared gateway](#zalo-in-a-named-profile-only-one-shared-gateway)), adds `zalo-platform` there, and sets `platforms.zalo.enabled: false` in `~/.hermes/config.yaml` unless that key is already set. | `default` is one of the target profiles |
+| 4    | Copies the Python adapter into `<profile>/plugins/zalo-person`, adds `zalo-person` to `plugins.enabled` and the plugin toolsets to `platform_toolsets.zalo-person` in `<profile>/config.yaml`. | default profile missing                                             |
+| 4b   | Only when the adapter goes into named profiles but not `default`: copies the same adapter into `~/.hermes/plugins/zalo-person` (host of the [shared gateway](#zalo-in-a-named-profile-only-one-shared-gateway)), adds `zalo-person` there, and sets `platforms.zalo-person.enabled: false` in `~/.hermes/config.yaml` unless that key is already set. | `default` is one of the target profiles |
 | 5    | Optional [tool access hook](#tool-access-hook-optional): copies it to `<profile>/agent-hooks/`, registers it under `hooks.pre_tool_call`, writes owner settings to `<profile>/.env`.    | runs only with a hook option, or when the hook is already installed |
 
 `<profile>` is the folder of the chosen Hermes profile.
@@ -231,8 +231,8 @@ node bin/cli.mjs setup --profile work
 | Service (Linux)   | `~/.config/systemd/user/com.hermes.zaloplugin.service`                                                                |
 | Service (macOS)   | `~/Library/LaunchAgents/com.hermes.zaloplugin.plist`                                                                  |
 | Service (Windows) | Scheduled Task `HermesZaloPlugin` + `~/.hermes-zalo/bridge-launcher.cmd`                                            |
-| Adapter           | `<profile>/plugins/zalo/`                                                                                             |
-| Hermes config     | `<profile>/config.yaml` (`plugins.enabled`, `platform_toolsets.zalo`, `hooks.pre_tool_call`)                    |
+| Adapter           | `<profile>/plugins/zalo-person/`                                                                                             |
+| Hermes config     | `<profile>/config.yaml` (`plugins.enabled`, `platform_toolsets.zalo-person`, `hooks.pre_tool_call`)                    |
 | Hook (optional)   | `<profile>/agent-hooks/zalo-tool-access.py`, settings in `<profile>/.env`                                           |
 
 There is **one bridge per machine** (one Zalo account), shared by every profile;
@@ -248,9 +248,9 @@ what that needs:
 
 | Where                   | What                                                                                  | Why                                                                                                                                                                                                                   |
 | ----------------------- | ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `profiles/<name>/`      | adapter, `zalo-platform` enabled, `ZALO_*` in `.env` (written by `hermes -p <name> gateway setup`) | The profile's own Zalo settings: bridge URL, allowlists, owners, home channel, hook. The adapter reads them from **this profile's** `.env` (Hermes's per-profile secret scope, like the bundled Telegram adapter), never from `~/.hermes/.env`. |
-| `~/.hermes/` (default)  | host copy: `plugins/zalo/` + `zalo-platform` in `plugins.enabled`                      | The shared gateway restores every profile's stored chat routes at start, before the named profiles' plugins load. Without the plugin there, every Zalo route is skipped (`'zalo' is not a valid Platform`) and each chat starts a new session after a restart. |
-| `~/.hermes/config.yaml` | `platforms.zalo.enabled: false`                                                        | The default profile loads the plugin but does not connect to the bridge itself. One bridge is one Zalo account: two profiles on it would both answer.                                                                |
+| `profiles/<name>/`      | adapter, `zalo-person` enabled, `ZALO_*` in `.env` (written by `hermes -p <name> gateway setup`) | The profile's own Zalo settings: bridge URL, allowlists, owners, home channel, hook. The adapter reads them from **this profile's** `.env` (Hermes's per-profile secret scope, like the bundled Telegram adapter), never from `~/.hermes/.env`. |
+| `~/.hermes/` (default)  | host copy: `plugins/zalo-person/` + `zalo-person` in `plugins.enabled`                      | The shared gateway restores every profile's stored chat routes at start, before the named profiles' plugins load. Without the plugin there, every Zalo route is skipped (`'zalo-person' is not a valid Platform`) and each chat starts a new session after a restart. |
+| `~/.hermes/config.yaml` | `platforms.zalo-person.enabled: false`                                                        | The default profile loads the plugin but does not connect to the bridge itself. One bridge is one Zalo account: two profiles on it would both answer.                                                                |
 
 Steps:
 
@@ -261,16 +261,16 @@ hermes gateway restart                  # the one gateway, for every profile
 grep -i zalo ~/.hermes/logs/gateway.log | tail -3
 ```
 
-When it works, the log shows `✓ zalo connected (profile: lily)`, no
-`'zalo' is not a valid Platform` warnings, and no `✓ zalo connected` line
+When it works, the log shows `✓ zalo-person connected (profile: lily)`, no
+`'zalo-person' is not a valid Platform` warnings, and no `✓ zalo-person connected` line
 without `(profile: …)` (that would be the default profile connecting too).
 
 If Zalo was set up in the default profile before, adding a named profile turns
 it off there (the installer says so). To keep Zalo in the default profile
-instead, set `platforms.zalo.enabled: true` in `~/.hermes/config.yaml` and
+instead, set `platforms.zalo-person.enabled: true` in `~/.hermes/config.yaml` and
 uninstall it from the named profile. Older versions of this guide asked to copy
 `ZALO_*` into `~/.hermes/.env`; that is no longer needed, and those lines can be
-removed once `platforms.zalo.enabled: false` is set.
+removed once `platforms.zalo-person.enabled: false` is set.
 
 ## Configuration
 
@@ -370,7 +370,7 @@ systemctl --user restart hermes-gateway.service
 
 # check
 H=~/.hermes/profiles/<name>/agent-hooks/zalo-tool-access.py
-echo '{"tool_name":"terminal"}' | HERMES_SESSION_PLATFORM=zalo HERMES_SESSION_USER_ID=123 $H  # blocked
+echo '{"tool_name":"terminal"}' | HERMES_SESSION_PLATFORM=zalo-person HERMES_SESSION_USER_ID=123 $H  # blocked
 echo '{"tool_name":"terminal"}' | HERMES_SESSION_PLATFORM=cli $H                             # no output = allowed
 ```
 
@@ -389,11 +389,11 @@ e.g. `P=~/.hermes/profiles/<name>`.
 
    ```yaml
    platforms:
-     zalo:
+     zalo-person:
        allow_admin_from: ['<uid>']    # slash commands + owner tag
    platform_toolsets:
-     zalo: [clarify, code_execution, cronjob, delegation, file, memory,
-            session_search, skills, terminal, todo, vision, web, zalo_groups]
+     zalo-person: [clarify, code_execution, cronjob, delegation, file, memory,
+                   session_search, skills, terminal, todo, vision, web, zalo_groups]
    ```
 3. `$P/SOUL.md`, before any Zalo restrictions:
 
@@ -419,7 +419,7 @@ e.g. `P=~/.hermes/profiles/<name>`.
 - **Groups:** by default (`ZALO_GROUP_MODE=mention`) the bot answers only when
   @mentioned, replied to, or when a message starts with its display name. With no
   group selected in the wizard, it stays out of all groups.
-- **Group stats & summaries:** add `zalo_groups` under `platform_toolsets.zalo` in
+- **Group stats & summaries:** add `zalo_groups` under `platform_toolsets.zalo-person` in
   `config.yaml` to give the agent `zalo_group_stats` and `zalo_group_messages`. Only
   messages received while the bridge was running are available
   (`ZALO_GROUP_LOG_DAYS`).
@@ -460,6 +460,14 @@ hermes gateway restart                          # new adapter code needs the sha
 Leave out `--profile` for the default profile. If you installed with `ZALO_*` path
 variables, set them again here.
 
+Upgrading from an install that used the older names (plugin `zalo-platform` in
+`plugins/zalo`, platform `zalo`): `setup` moves each profile it touches to
+`zalo-person`. It removes `plugins/zalo`, drops `zalo-platform` from
+`plugins.enabled`, renames `platforms.zalo` and `platform_toolsets.zalo`, and
+rewrites cron `deliver: zalo:…` targets. Run it for every profile that has the
+adapter, including `default` when it hosts the shared gateway. Chats stored
+under the old platform start a new session once.
+
 ## Uninstall
 
 ### Commands
@@ -484,11 +492,11 @@ nothing to remove there and carries on.
 
 | Removed                                                               | Kept                                                         |
 | --------------------------------------------------------------------- | ------------------------------------------------------------ |
-| `<profile>/plugins/zalo/`                                           | The bridge code (git checkout)                               |
-| `zalo-platform` in `plugins.enabled` of `<profile>/config.yaml` | `~/.hermes-zalo/` (`bridge.env`, logs, caches)           |
-| `platforms.zalo.enabled: false` (written by the installer)        | The Zalo login, unless `--purge`                           |
+| `<profile>/plugins/zalo-person/`                                           | The bridge code (git checkout)                               |
+| `zalo-person` in `plugins.enabled` of `<profile>/config.yaml` | `~/.hermes-zalo/` (`bridge.env`, logs, caches)           |
+| `platforms.zalo-person.enabled: false` (written by the installer)        | The Zalo login, unless `--purge`                           |
 | The hook file and its `hooks.pre_tool_call` entry                   | `ZALO_*` lines in `<profile>/.env` (reused on reinstall) |
-| The background service, **once no profile uses Zalo any more**       | `platform_toolsets.zalo` and the rest of `config.yaml`   |
+| The background service, **once no profile uses Zalo any more**       | `platform_toolsets.zalo-person` and the rest of `config.yaml`   |
 
 The bridge and the default profile's host copy are shared, so uninstall keeps
 them while another profile needs them:
@@ -499,7 +507,7 @@ them while another profile needs them:
   copy from `~/.hermes` (only if Zalo is off there) and the service.
 - `uninstall --profile default` while a named profile still uses Zalo: keeps the
   adapter in `~/.hermes` (the shared gateway needs it) and only sets
-  `platforms.zalo.enabled: false`, so the default profile stops answering.
+  `platforms.zalo-person.enabled: false`, so the default profile stops answering.
 
 ### Uninstall examples
 
@@ -560,8 +568,8 @@ The bridge listens on `127.0.0.1:8787`. With a token, send it as `x-bridge-token
 | `Hermes home not found at …/.hermes`, adapter skipped | No default profile. Pass `--profile <name>`, or install Hermes and re-run with `--service-only`.                  |
 | Zalo missing in `hermes gateway setup`                 | The adapter went into another profile: check the `Hermes profile: …` line and re-run with the right `--profile`. |
 | `[MULTIPLEX] Profile '<name>': … adapter creation returned None` | `ZALO_PLUGIN_URL` is missing from `~/.hermes/.env`. See [Zalo in a named profile only](#zalo-in-a-named-profile-only-one-shared-gateway). |
-| `Skipping invalid … entry 'agent:<name>:zalo:…': 'zalo' is not a valid Platform` | The default profile does not load the plugin: add `plugins/zalo` and `zalo-platform` to `~/.hermes` (`setup --service-only --profile default`). |
-| `✓ zalo connected` without `(profile: …)` next to a named profile's line | The default profile is connected too. Set `platforms.zalo.enabled: false` in `~/.hermes/config.yaml`, then `hermes gateway restart`. |
+| `Skipping invalid … entry 'agent:<name>:zalo-person:…': 'zalo-person' is not a valid Platform` | The default profile does not load the plugin: add `plugins/zalo-person` and `zalo-person` to `~/.hermes` (`setup --service-only --profile default`). |
+| `✓ zalo-person connected` without `(profile: …)` next to a named profile's line | The default profile is connected too. Set `platforms.zalo-person.enabled: false` in `~/.hermes/config.yaml`, then `hermes gateway restart`. |
 | `loggedIn=false` or `sessionDead`                    | `node bin/cli.mjs login`; if the cookie is dead, `node bin/cli.mjs setup --relogin`.                              |
 | Session dies with code 3000                              | Another Zalo Web session or bridge is open. Close it, then `login`.                                                 |
 | `Bridge: NOT running`                                  | `node bin/cli.mjs restart`, or `node bin/cli.mjs setup --service-only` if never installed.                        |

@@ -426,7 +426,7 @@ class GroupToolsTest(unittest.TestCase):
         self.assertEqual({m["id"] for m in out["matches"]}, {"222", "333"})
 
     def test_defaults_to_current_group(self):
-        env = {"HERMES_SESSION_PLATFORM": "zalo", "HERMES_SESSION_CHAT_TYPE": "group",
+        env = {"HERMES_SESSION_PLATFORM": "zalo-person", "HERMES_SESSION_CHAT_TYPE": "group",
                "HERMES_SESSION_CHAT_ID": "111"}
         old = {k: os.environ.get(k) for k in env}
         os.environ.update(env)

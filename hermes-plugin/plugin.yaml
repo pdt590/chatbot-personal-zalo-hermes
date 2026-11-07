@@ -1,4 +1,4 @@
-name: zalo-platform
+name: zalo-person
 label: Zalo
 kind: platform
 version: 1.0.0
@@ -15,7 +15,7 @@ provides_tools:
   - zalo_group_stats
   - zalo_group_messages
 # Toolsets this plugin registers. `hermes-zalo-plugin setup` adds each one to
-# platform_toolsets.zalo in the Hermes config. Keep in sync with register().
+# platform_toolsets.zalo-person in the Hermes config. Keep in sync with register().
 provides_toolsets:
   - zalo_groups
 requires_env:

@@ -20,7 +20,8 @@ import {
 } from "./paths.js";
 import { removeService } from "./service.js";
 import {
-  HOOK_FILE, disablePluginInConfig, getPlatformEnabled, removePlatformDisabled, removePreToolHook, setPlatformEnabled,
+  HOOK_FILE, LEGACY_PLATFORM_NAME, LEGACY_PLUGIN_DIR, LEGACY_PLUGIN_NAME, PLATFORM_NAME, PLUGIN_DIR, PLUGIN_NAME,
+  disablePluginInConfig, getPlatformEnabled, removePlatformDisabled, removePreToolHook, setPlatformEnabled,
 } from "./hermesConfig.js";
 
 const argv = process.argv.slice(2);
@@ -50,7 +51,11 @@ if (HERMES_HOMES[0].source === "default" && !HOOK_ONLY) {
 function log(m) { console.log(m); }
 
 const readText = (f) => (fs.existsSync(f) ? fs.readFileSync(f, "utf-8") : "");
-const zaloState = (dir) => getPlatformEnabled(readText(path.join(dir, "config.yaml")), "zalo");
+// A home not yet migrated by `setup` still carries the legacy platforms.zalo key.
+const zaloState = (dir) => {
+  const cfg = readText(path.join(dir, "config.yaml"));
+  return getPlatformEnabled(cfg, PLATFORM_NAME) ?? getPlatformEnabled(cfg, LEGACY_PLATFORM_NAME);
+};
 
 // Profiles under the same Hermes root(s) that keep the adapter after this run:
 // Map<root, { named: [home], defaultActive: bool }>.
@@ -66,7 +71,7 @@ function usersLeft(targets) {
   for (const root of roots) {
     const named = profileHomesUnder(root)
       .filter((h) => h.profile !== "default" && !targeted.has(h.dir) && hasZaloAdapter(h.dir));
-    // The default profile uses Zalo itself unless its copy is the host copy (platforms.zalo.enabled: false).
+    // The default profile uses Zalo itself unless its copy is the host copy (platforms.zalo-person.enabled: false).
     const defaultActive = !targeted.has(root) && hasZaloAdapter(root) && zaloState(root) !== false;
     out.set(root, { named, defaultActive });
   }
@@ -81,7 +86,7 @@ if (PURGE && STILL_USED.length) {
 }
 
 // Mirror of install.mjs installHermesPlugin(): remove the Python adapter from
-// <hermes home>/plugins/zalo and drop "zalo-platform" from plugins.enabled. Leaves
+// <hermes home>/plugins/zalo-person and drop "zalo-person" from plugins.enabled. Leaves
 // the rest of config.yaml untouched.
 function removeHermesPlugin(home) {
   const hermesHome = home.dir;
@@ -107,47 +112,54 @@ function removeHermesPlugin(home) {
 function keepHostCopy(cfgPath, names) {
   log(`• Kept the adapter: the shared gateway runs here and Zalo is still used by: ${names.join(", ")}.`);
   try {
-    const r = setPlatformEnabled(readText(cfgPath), "zalo", false);
+    const r = setPlatformEnabled(readText(cfgPath), PLATFORM_NAME, false);
     if (r.status !== "already") fs.writeFileSync(cfgPath, r.text);
-    log(r.status === "already" ? "✓ Zalo already off in this profile (platforms.zalo.enabled: false)"
-      : "✓ Set platforms.zalo.enabled: false: this profile no longer answers on Zalo");
+    log(r.status === "already" ? "✓ Zalo already off in this profile (platforms.zalo-person.enabled: false)"
+      : "✓ Set platforms.zalo-person.enabled: false: this profile no longer answers on Zalo");
   } catch (e) {
     log(`⚠ Could not edit config.yaml: ${e.message}`);
-    log(`  Set platforms.zalo.enabled: false in ${cfgPath} by hand.`);
+    log(`  Set platforms.zalo-person.enabled: false in ${cfgPath} by hand.`);
   }
 }
 
-// <home>/plugins/zalo, "zalo-platform" in plugins.enabled and the
-// platforms.zalo.enabled: false a host copy carries. Leaves the rest of
-// config.yaml untouched.
+// <home>/plugins/zalo-person, "zalo-person" in plugins.enabled and the
+// platforms.zalo-person.enabled: false a host copy carries (and the same under
+// their legacy names: plugins/zalo, "zalo-platform", platforms.zalo). Leaves
+// the rest of config.yaml untouched.
 function removeAdapter(hermesHome, cfgPath) {
-  const dest = path.join(hermesHome, "plugins", "zalo");
-  if (fs.existsSync(dest)) {
+  let removedDir = false;
+  for (const dir of [PLUGIN_DIR, LEGACY_PLUGIN_DIR]) {
+    const dest = path.join(hermesHome, "plugins", dir);
+    if (!fs.existsSync(path.join(dest, "adapter.py"))) continue;
     fs.rmSync(dest, { recursive: true, force: true });
     log(`✓ Removed Hermes plugin: ${dest}`);
-  } else {
-    log("• No Hermes plugin directory to remove.");
+    removedDir = true;
   }
-  try {
-    const { text, removed } = disablePluginInConfig(readText(cfgPath));
-    if (removed) {
+  if (!removedDir) log("• No Hermes plugin directory to remove.");
+  let removedName = false;
+  for (const name of [PLUGIN_NAME, LEGACY_PLUGIN_NAME]) {
+    try {
+      const { text, removed } = disablePluginInConfig(readText(cfgPath), name);
+      if (!removed) continue;
       fs.writeFileSync(cfgPath, text);
-      log('✓ Removed "zalo-platform" from plugins.enabled in config.yaml');
-    } else {
-      log("• Plugin was not enabled in config.yaml (nothing to remove).");
+      log(`✓ Removed "${name}" from plugins.enabled in config.yaml`);
+      removedName = true;
+    } catch (e) {
+      log(`⚠ Could not edit config.yaml: ${e.message}`);
+      log(`  Manually remove "${name}" from plugins.enabled in ${cfgPath}`);
     }
-  } catch (e) {
-    log(`⚠ Could not edit config.yaml: ${e.message}`);
-    log(`  Manually remove "zalo-platform" from plugins.enabled in ${cfgPath}`);
   }
-  try {
-    const r = removePlatformDisabled(readText(cfgPath), "zalo");
-    if (r.removed) {
-      fs.writeFileSync(cfgPath, r.text);
-      log("✓ Removed platforms.zalo.enabled: false from config.yaml");
+  if (!removedName) log("• Plugin was not enabled in config.yaml (nothing to remove).");
+  for (const platform of [PLATFORM_NAME, LEGACY_PLATFORM_NAME]) {
+    try {
+      const r = removePlatformDisabled(readText(cfgPath), platform);
+      if (r.removed) {
+        fs.writeFileSync(cfgPath, r.text);
+        log(`✓ Removed platforms.${platform}.enabled: false from config.yaml`);
+      }
+    } catch (e) {
+      log(`⚠ Could not edit config.yaml: ${e.message}`);
     }
-  } catch (e) {
-    log(`⚠ Could not edit config.yaml: ${e.message}`);
   }
 }
 

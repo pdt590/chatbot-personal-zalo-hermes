@@ -29,8 +29,9 @@ import {
   LABEL, WIN_TASK, plistPath, restartService, serviceInstalled, stopService, unitPath, winLauncherPath,
 } from "./service.js";
 import {
-  HOOK_FILE, addPreToolHook, enablePlatformToolsets, enablePluginInConfig, getPlatformEnabled,
-  readProvidedToolsets, setEnvVar, setPlatformEnabled,
+  HOOK_FILE, LEGACY_PLATFORM_NAME, LEGACY_PLUGIN_DIR, LEGACY_PLUGIN_NAME, PLATFORM_NAME, PLUGIN_DIR, PLUGIN_NAME,
+  addPreToolHook, disablePluginInConfig, enablePlatformToolsets, enablePluginInConfig, getPlatformEnabled,
+  readProvidedToolsets, renameSectionKey, setEnvVar, setPlatformEnabled,
 } from "./hermesConfig.js";
 import { CLI, banner } from "./ui.js";
 
@@ -313,7 +314,7 @@ function installService() {
 // ── 4. Install the Hermes-side plugin so `hermes gateway` sees Zalo ──────────
 // The bridge (Node) and the Hermes adapter (Python) are separate halves. The
 // adapter lives under hermes-plugin/ in this package; copy it into the user's
-// Hermes plugin dir (<hermes home>/plugins/zalo) and add "zalo" to plugins.enabled
+// Hermes plugin dir (<hermes home>/plugins/zalo-person) and add "zalo-person" to plugins.enabled
 // so the (untrusted) user plugin is allowed to load.
 function installHermesPlugins() {
   step(4, "Installing the Hermes plugin (so `hermes gateway` sees Zalo)…");
@@ -326,9 +327,73 @@ function installHermesPlugins() {
   for (const [root, names] of hostHomesFor(HERMES_HOMES)) installHostCopy(src, root, names);
 }
 
-// Copy the adapter files into <hermes home>/plugins/zalo.
+// Installs made before the plugin, its directory and the platform were all
+// named "zalo-person" used plugin "zalo-platform" in plugins/zalo, registering
+// platform "zalo". Move such a home over: drop the old copy and plugin name,
+// and rename the config keys and cron delivery targets that name the platform.
+function migrateLegacyInstall(hermesHome) {
+  const old = path.join(hermesHome, "plugins", LEGACY_PLUGIN_DIR);
+  if (isLegacyAdapter(old)) {
+    fs.rmSync(old, { recursive: true, force: true });
+    log(`✓ Removed the old plugin directory ${old}`);
+  }
+  const cfgPath = path.join(hermesHome, "config.yaml");
+  if (fs.existsSync(cfgPath)) {
+    try {
+      const before = fs.readFileSync(cfgPath, "utf-8");
+      const d = disablePluginInConfig(before, LEGACY_PLUGIN_NAME);
+      let text = d.text;
+      if (d.removed) log(`✓ Removed the old plugin name "${LEGACY_PLUGIN_NAME}" from plugins.enabled`);
+      for (const section of ["platforms", "platform_toolsets"]) {
+        const r = renameSectionKey(text, section, LEGACY_PLATFORM_NAME, PLATFORM_NAME);
+        text = r.text;
+        if (r.status === "renamed") log(`✓ Renamed ${section}.${LEGACY_PLATFORM_NAME} to ${section}.${PLATFORM_NAME} in config.yaml`);
+        if (r.status === "conflict") {
+          log(`⚠ ${cfgPath} has both ${section}.${LEGACY_PLATFORM_NAME} and ${section}.${PLATFORM_NAME};`);
+          log(`  the old key is ignored now. Merge it into ${section}.${PLATFORM_NAME} by hand.`);
+        }
+      }
+      if (text !== before) fs.writeFileSync(cfgPath, text);
+    } catch (e) {
+      log(`⚠ Could not migrate ${cfgPath}: ${e.message}`);
+    }
+  }
+  migrateCronDeliver(hermesHome);
+}
+
+// An adapter copy this package installed under the old name.
+function isLegacyAdapter(dir) {
+  try {
+    return /^name:\s*["']?zalo-platform["']?\s*$/m.test(fs.readFileSync(path.join(dir, "plugin.yaml"), "utf-8"));
+  } catch {
+    return false;
+  }
+}
+
+// Cron jobs deliver to "<platform>[:<target>]" (comma-separated for several).
+function migrateCronDeliver(hermesHome) {
+  const jobsPath = path.join(hermesHome, "cron", "jobs.json");
+  if (!fs.existsSync(jobsPath)) return;
+  try {
+    const before = fs.readFileSync(jobsPath, "utf-8");
+    const old = new RegExp(`^(\\s*)${LEGACY_PLATFORM_NAME}(?=:|\\s*$)`);
+    let n = 0;
+    const text = before.replace(/("deliver"\s*:\s*")([^"]*)"/g, (_, pre, value) => {
+      const parts = value.split(",").map((t) => (old.test(t) ? (n++, t.replace(old, `$1${PLATFORM_NAME}`)) : t));
+      return `${pre}${parts.join(",")}"`;
+    });
+    if (!n) return;
+    fs.writeFileSync(jobsPath, text);
+    log(`✓ Updated ${n} cron delivery target(s) to "${PLATFORM_NAME}:…" in ${jobsPath}`);
+  } catch (e) {
+    log(`⚠ Could not update cron delivery targets in ${jobsPath}: ${e.message}`);
+  }
+}
+
+// Copy the adapter files into <hermes home>/plugins/zalo-person.
 function copyAdapter(src, hermesHome) {
-  const dest = path.join(hermesHome, "plugins", "zalo");
+  migrateLegacyInstall(hermesHome);
+  const dest = path.join(hermesHome, "plugins", PLUGIN_DIR);
   fs.mkdirSync(dest, { recursive: true });
   // Files only: a checkout has hermes-plugin/__pycache__/, and copyFileSync on
   // a directory throws EISDIR. Python rebuilds bytecode itself.
@@ -345,18 +410,18 @@ function copyAdapter(src, hermesHome) {
   log(`✓ Plugin copied to ${dest}`);
 }
 
-// Enable the plugin in config.yaml (plugins.enabled must contain "zalo-platform").
+// Enable the plugin in config.yaml (plugins.enabled must contain "zalo-person").
 function enablePlugin(cfgPath) {
   try {
     const before = fs.existsSync(cfgPath) ? fs.readFileSync(cfgPath, "utf-8") : "";
     const { text, status } = enablePluginInConfig(before);
     if (status !== "already") fs.writeFileSync(cfgPath, text);
     log(status === "already" ? "✓ Plugin already enabled in config.yaml"
-        : status === "added" ? '✓ Added "zalo-platform" to plugins.enabled in config.yaml'
-        : '✓ Created plugins.enabled with "zalo-platform" in config.yaml');
+        : status === "added" ? `✓ Added "${PLUGIN_NAME}" to plugins.enabled in config.yaml`
+        : `✓ Created plugins.enabled with "${PLUGIN_NAME}" in config.yaml`);
   } catch (e) {
     log(`⚠ Could not auto-enable the plugin: ${e.message}`);
-    log(`  Manually add "zalo-platform" under plugins.enabled in ${cfgPath}`);
+    log(`  Manually add "${PLUGIN_NAME}" under plugins.enabled in ${cfgPath}`);
   }
 }
 
@@ -385,10 +450,10 @@ function installHermesPlugin(src, home) {
 // profile under <root>/profiles (gateway.multiplex_profiles). That process
 // restores the stored chat routes of every profile at start, before the named
 // profiles' plugins load; without the plugin in the default profile too, every
-// Zalo route is dropped ("'zalo' is not a valid Platform") and each chat starts
+// Zalo route is dropped ("'zalo-person' is not a valid Platform") and each chat starts
 // a new session after a restart. So when the adapter goes into named profiles
 // only, the default profile gets the same adapter files, with Zalo turned off
-// there (platforms.zalo.enabled: false) so it does not connect to the bridge.
+// there (platforms.zalo-person.enabled: false) so it does not connect to the bridge.
 
 /** Map<root, [profile names]> of hosts whose named profiles are targeted but which are not targeted themselves. */
 function hostHomesFor(homes) {
@@ -406,34 +471,34 @@ function hostHomesFor(homes) {
 function installHostCopy(src, root, names) {
   log(`Hermes profile: default → ${root} (${hermesHomeSourceLabel({ source: "host" })} for ${names.join(", ")})`);
   const hadAdapter = hasZaloAdapter(root);
-  copyAdapter(src, root);
+  copyAdapter(src, root); // also renames a legacy platforms.zalo key first
   const cfgPath = path.join(root, "config.yaml");
   enablePlugin(cfgPath);
   try {
     const before = fs.existsSync(cfgPath) ? fs.readFileSync(cfgPath, "utf-8") : "";
-    const state = getPlatformEnabled(before, "zalo");
+    const state = getPlatformEnabled(before, PLATFORM_NAME);
     if (state === false) {
-      log("✓ Zalo stays off in the default profile (platforms.zalo.enabled: false)");
+      log("✓ Zalo stays off in the default profile (platforms.zalo-person.enabled: false)");
     } else if (state === true) {
-      log("⚠ Zalo is enabled in the default profile too (platforms.zalo.enabled: true): the default");
+      log("⚠ Zalo is enabled in the default profile too (platforms.zalo-person.enabled: true): the default");
       log(`  profile and ${names.join(", ")} all read the same bridge and would all answer.`);
-      log(`  Set platforms.zalo.enabled: false in ${cfgPath} unless that is intended.`);
+      log(`  Set platforms.zalo-person.enabled: false in ${cfgPath} unless that is intended.`);
     } else {
-      fs.writeFileSync(cfgPath, setPlatformEnabled(before, "zalo", false).text);
-      log("✓ Set platforms.zalo.enabled: false in config.yaml (the default profile loads the plugin");
+      fs.writeFileSync(cfgPath, setPlatformEnabled(before, PLATFORM_NAME, false).text);
+      log("✓ Set platforms.zalo-person.enabled: false in config.yaml (the default profile loads the plugin");
       log(`  for ${names.join(", ")} but does not answer on Zalo itself)`);
       const envPath = path.join(root, ".env");
       const env = fs.existsSync(envPath) ? parseEnvFile(fs.readFileSync(envPath, "utf-8")) : {};
       if (hadAdapter && env.ZALO_PLUGIN_URL) {
         log("  Zalo was set up in the default profile before. One bridge is one Zalo account, so");
         log("  only one profile should answer on it. To keep it in the default profile instead, set");
-        log(`  platforms.zalo.enabled: true there and run: ${CLI} uninstall --profile ${names.join(",")}`);
+        log(`  platforms.zalo-person.enabled: true there and run: ${CLI} uninstall --profile ${names.join(",")}`);
       }
     }
   } catch (e) {
     log(`⚠ Could not edit ${cfgPath}: ${e.message}`);
     log("  Add this by hand so the default profile does not answer on Zalo:");
-    log("    platforms:\n      zalo:\n        enabled: false");
+    log(`    platforms:\n      ${PLATFORM_NAME}:\n        enabled: false`);
   }
 }
 
@@ -503,7 +568,7 @@ function installToolAccessHook({ dir: hermesHome, profile }, cfgPath) {
 }
 
 // Turn on every toolset the plugin provides (plugin.yaml provides_toolsets)
-// for the zalo platform. Hermes enables plugin toolsets by default, but once a
+// for the zalo-person platform. Hermes enables plugin toolsets by default, but once a
 // platform has a saved toolset list (`hermes tools`) only the listed ones run.
 function enablePluginToolsets(cfgPath, pluginYamlPath) {
   let toolsets = [];
@@ -515,7 +580,7 @@ function enablePluginToolsets(cfgPath, pluginYamlPath) {
   if (!toolsets.length) return;
   try {
     const before = fs.existsSync(cfgPath) ? fs.readFileSync(cfgPath, "utf-8") : "";
-    const r = enablePlatformToolsets(before, "zalo", toolsets);
+    const r = enablePlatformToolsets(before, PLATFORM_NAME, toolsets);
     if (r.status === "added") {
       fs.writeFileSync(cfgPath, r.text);
       log(`✓ Enabled toolset(s) for Zalo in config.yaml: ${r.added.join(", ")}`);
@@ -526,7 +591,7 @@ function enablePluginToolsets(cfgPath, pluginYamlPath) {
     }
   } catch (e) {
     log(`⚠ Could not enable the plugin toolsets: ${e.message}`);
-    log(`  Add ${toolsets.join(", ")} under platform_toolsets.zalo in ${cfgPath}`);
+    log(`  Add ${toolsets.join(", ")} under platform_toolsets.zalo-person in ${cfgPath}`);
   }
 }
 

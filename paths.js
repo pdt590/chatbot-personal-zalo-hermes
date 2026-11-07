@@ -10,6 +10,7 @@
 import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";
+import { LEGACY_PLUGIN_DIR, PLUGIN_DIR } from "./hermesConfig.js";
 
 export function dataDir() {
   const fromEnv = process.env.ZALO_DATA_DIR;
@@ -258,7 +259,7 @@ export function profileHomesUnder(root) {
   return out;
 }
 
-/** Is the Zalo adapter installed in this Hermes home? */
+/** Is the Zalo adapter installed in this Hermes home (current or legacy plugins/<dir>)? */
 export function hasZaloAdapter(dir) {
-  return fs.existsSync(path.join(dir, "plugins", "zalo", "adapter.py"));
+  return [PLUGIN_DIR, LEGACY_PLUGIN_DIR].some((d) => fs.existsSync(path.join(dir, "plugins", d, "adapter.py")));
 }

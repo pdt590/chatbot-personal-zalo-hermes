@@ -69,6 +69,10 @@ MSG_UNVERIFIED = "Không thể xác minh quyền sử dụng công cụ."
 
 LOG = None  # set by configure(); log() is a no-op until then
 
+# The adapter's platform name, plus "zalo" from installs before the rename
+# (old sessions in state.db keep that source and stay restricted).
+ZALO_PLATFORMS = {"zalo-person", "zalo"}
+
 
 def log(line: str) -> None:
     if not LOG:
@@ -220,7 +224,7 @@ def main(argv) -> None:
     else:
         block(MSG_UNVERIFIED, f"unknown-session sid={sid} tool={tool}")
 
-    if source != "zalo":
+    if source not in ZALO_PLATFORMS:
         return
 
     if user_id not in cfg["owners"]:
